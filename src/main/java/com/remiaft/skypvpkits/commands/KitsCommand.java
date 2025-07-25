@@ -331,7 +331,7 @@ public class KitsCommand implements CommandExecutor, TabCompleter {
                         
                         if (!levels.isEmpty()) {
                             String kitName = plugin.getConfigManager().getKitDisplayName(kitType);
-                            sender.sendMessage("§7" + kitName + "：§f" + levels.toString() + " §a✧");
+                            sender.sendMessage("§7" + kitName + "：§f" + levels + " §a✧");
                         }
                     }
                 });
@@ -641,8 +641,24 @@ public class KitsCommand implements CommandExecutor, TabCompleter {
             if ((subCommand.equals("buy") || subCommand.equals("购买") || 
                  subCommand.equals("claim") || subCommand.equals("领取")) 
                  && sender.hasPermission("skypvpkits.use")) {
-                // 等级
-                for (int i = 1; i <= 5; i++) {
+                // 等级 - 根据礼包类型确定最大等级
+                String kitType = parseKitType(args[1]);
+                int maxLevel = 5; // 默认最大等级
+                if (kitType != null) {
+                    switch (kitType) {
+                        case "galaxy":
+                            maxLevel = 4; // 银河礼包只有4个等级
+                            break;
+                        case "sky":
+                        case "sun":
+                            maxLevel = 5; // 天空和太阳礼包有5个等级
+                            break;
+                        default:
+                            maxLevel = 4; // 其他礼包有4个等级
+                            break;
+                    }
+                }
+                for (int i = 1; i <= maxLevel; i++) {
                     completions.add(String.valueOf(i));
                 }
             } else if ((subCommand.equals("give") || subCommand.equals("给予")) 
@@ -664,13 +680,45 @@ public class KitsCommand implements CommandExecutor, TabCompleter {
             } else if ((subCommand.equals("give") || subCommand.equals("给予")) 
                        && sender.hasPermission("skypvpkits.admin")) {
                 // 管理员给予礼包 - 等级
-                for (int i = 1; i <= 5; i++) {
+                String kitType = parseKitType(args[2]);
+                int maxLevel = 5; // 默认最大等级
+                if (kitType != null) {
+                    switch (kitType) {
+                        case "galaxy":
+                            maxLevel = 4; // 银河礼包只有4个等级
+                            break;
+                        case "sky":
+                        case "sun":
+                            maxLevel = 5; // 天空和太阳礼包有5个等级
+                            break;
+                        default:
+                            maxLevel = 4; // 其他礼包有4个等级
+                            break;
+                    }
+                }
+                for (int i = 1; i <= maxLevel; i++) {
                     completions.add(String.valueOf(i));
                 }
             } else if ((subCommand.equals("remove") || subCommand.equals("delete") || subCommand.equals("删除")) 
                        && sender.hasPermission("skypvpkits.admin")) {
                 // 管理员删除礼包 - 等级
-                for (int i = 1; i <= 5; i++) {
+                String kitType = parseKitType(args[2]);
+                int maxLevel = 5; // 默认最大等级
+                if (kitType != null) {
+                    switch (kitType) {
+                        case "galaxy":
+                            maxLevel = 4; // 银河礼包只有4个等级
+                            break;
+                        case "sky":
+                        case "sun":
+                            maxLevel = 5; // 天空和太阳礼包有5个等级
+                            break;
+                        default:
+                            maxLevel = 4; // 其他礼包有4个等级
+                            break;
+                    }
+                }
+                for (int i = 1; i <= maxLevel; i++) {
                     completions.add(String.valueOf(i));
                 }
             }

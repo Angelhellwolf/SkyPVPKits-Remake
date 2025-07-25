@@ -212,8 +212,13 @@ public class TestEZItemCommand implements CommandExecutor, TabCompleter {
             } else if (subCommand.equals("test")) {
                 completions.addAll(Arrays.asList("sky", "mars", "earth", "moon", "sun", "mining", "galaxy"));
             }
-        } else if (args.length == 3 && args[0].toLowerCase().equals("test")) {
-            completions.addAll(Arrays.asList("1", "2", "3", "4", "5"));
+        } else if (args.length == 3 && args[0].equalsIgnoreCase("test")) {
+            String kitType = args[1];
+            if (kitType.equals("galaxy")) {
+                completions.addAll(Arrays.asList("1", "2", "3", "4"));
+            } else {
+                completions.addAll(Arrays.asList("1", "2", "3", "4", "5"));
+            }
         }
         
         // 过滤匹配项

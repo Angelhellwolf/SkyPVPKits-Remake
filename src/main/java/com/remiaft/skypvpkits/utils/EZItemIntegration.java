@@ -49,8 +49,10 @@ public class EZItemIntegration {
         "2挖矿mining镐", "2挖矿mining头盔", "2挖矿mining胸甲", "2挖矿mining护腿", "2挖矿mining鞋子",
         "3挖矿mining镐", "3挖矿mining头盔", "3挖矿mining胸甲", "3挖矿mining护腿", "3挖矿mining鞋子",
         "4挖矿mining镐", "4挖矿mining头盔", "4挖矿mining胸甲", "4挖矿mining护腿", "4挖矿mining鞋子",
-        "1银河galaxy剑", "1银河galaxy头盔", "1银河galaxy胸甲", "1银河galaxy护腿", "1银河galaxy鞋子",
-        "2银河galaxy剑", "2银河galaxy头盔", "2银河galaxy胸甲", "2银河galaxy护腿", "2银河galaxy鞋子"
+            "新银河1_剑", "新银河1_头盔", "新银河1_胸甲", "新银河1_裤", "新银河1_鞋",
+            "新银河2_剑", "新银河2_头盔", "新银河2_胸甲", "新银河2_裤", "新银河2_鞋",
+            "新银河3_剑", "新银河3_头盔", "新银河3_胸甲", "新银河3_裤", "新银河3_鞋",
+            "新银河4_剑", "新银河4_头盔", "新银河4_胸甲", "新银河4_裤", "新银河4_鞋"
     );
     
     public EZItemIntegration(SkyPVPKits plugin) {
@@ -158,8 +160,10 @@ public class EZItemIntegration {
                 return level + "挖矿mining" + miningEquipType;
                 
             case "galaxy":
-                // 银河系列：1银河galaxy剑, 1银河galaxy头盔, 等
-                return level + "银河galaxy" + equipType;
+                // 新银河系列：新银河1_剑, 新银河1_头盔, 等
+                String galaxyEquipType = equipType;
+                if (equipType.equals("护腿")) galaxyEquipType = "裤";
+                return "新银河" + level + "_" + galaxyEquipType;
                 
             default:
                 return kitType + level + "_" + equipType;

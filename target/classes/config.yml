@@ -4,7 +4,7 @@
 # 服务器状态设置
 server:
   # 服务器是否度过安全期 (true=正常, false=困难阶段)
-  safe_period: false
+  safe_period: true
   # 联系QQ号
   contact_qq: "2076049239"
 
@@ -32,10 +32,8 @@ kits:
   sky:
     enabled: true
     display_name: "§b天空礼包"
-    description: 
-      - "§7基础礼包，适合新手玩家"
-      - "§7包含基础装备和资源"
-      - "§e等级1免费，等级2-5正常收费"
+    description:
+      - "§7向往"
     icon: "DIAMOND_SWORD"
     levels: 5
     # 永久购买价格 (点券)
@@ -46,90 +44,84 @@ kits:
     support_points: true
     # 是否支持月付
     support_monthly: true
-    
+
   # 火星礼包 (4个等级)
   mars:
     enabled: true
     display_name: "§c火星礼包"
     description:
-      - "§7进阶礼包，提供更好的装备"
-      - "§7适合有经验的玩家"
+      - "§7深邃"
     icon: "IRON_SWORD"
     levels: 4
     permanent_prices: [8000, 8000, 12000, 16000]
     level_discounts: [1.0, 1.0, 1.0, 1.0]  # 所有等级正常价格
     support_points: true
     support_monthly: true
-    
+
   # 地球礼包 (4个等级)
   earth:
     enabled: true
     display_name: "§a地球礼包"
     description:
-      - "§7高级礼包，装备精良"
-      - "§7包含稀有物品"
+      - "§7家园"
     icon: "GOLD_SWORD"
     levels: 4
     permanent_prices: [24000, 10000, 20000, 25000]
     level_discounts: [1.0, 1.0, 1.0, 1.0]  # 所有等级正常价格
     support_points: true
     support_monthly: true
-    
+
   # 月球礼包 (4个等级)
   moon:
     enabled: true
     display_name: "§f月球礼包"
     description:
-      - "§7顶级礼包，装备卓越"
-      - "§7包含传说级物品"
+      - "§7月亮照亮你我的心"
     icon: "DIAMOND_PICKAXE"
     levels: 4
     permanent_prices: [40000, 20000, 25000, 30000]
     level_discounts: [1.0, 1.0, 1.0, 1.0]  # 所有等级正常价格
     support_points: true
     support_monthly: true
-    
+
   # 太阳礼包 (5个等级)
   sun:
     enabled: true
     display_name: "§e太阳礼包"
     description:
-      - "§7终极礼包，无与伦比"
-      - "§7包含神话级装备"
+      - "§7爱情如火"
     icon: "NETHER_STAR"
     levels: 5
     permanent_prices: [22000, 28000, 45000, 50000, 100500]
     level_discounts: [1.0, 1.0, 1.0, 1.0, 1.0]  # 所有等级正常价格
     support_points: true
     support_monthly: true
-    
+
   # 挖矿礼包 (4个等级)
   mining:
     enabled: true
     display_name: "§8挖矿礼包"
     description:
       - "§7专业挖矿工具包"
-      - "§7提升挖矿效率"
     icon: "DIAMOND_PICKAXE"
     levels: 4
     permanent_prices: [40000, 10000, 10000, 15000]
     level_discounts: [1.0, 1.0, 1.0, 1.0]  # 所有等级正常价格
     support_points: true
     support_monthly: true
-    
-  # 银河礼包 (2个等级) - 最高等级，不支持月付和点券购买
+
+  # 银河礼包 (4个等级) - 新银河系列
   galaxy:
     enabled: true
     display_name: "§d银河礼包"
     description:
-      - "§7至尊礼包，王者专属"
-      - "§7服务器最高级别礼包"
+      - "§7新银河系列装备"
     icon: "BEACON"
-    levels: 2
-    permanent_prices: [55000, 75000]
-    level_discounts: [1.0, 1.0]  # 所有等级正常价格
-    support_points: false
-    support_monthly: false
+    levels: 4
+    permanent_prices: [55000, 75000, 110000, 60000]
+    level_discounts: [1.0, 1.0, 1.0, 1.0]  # 所有等级正常价格
+    support_points: true
+    support_monthly: true
 
 # 菜单设置
 menu:
@@ -1705,108 +1697,8 @@ items:
     display-name: "§6矿工营养胶囊§7"
     amount: 20
 
-  # 银河系列 - 最高级装备
-  银河剑_1:
-    material: DIAMOND_SWORD
-    display-name: "§5§l银河终极§7剑"
-    amount: 1
-    enchantments:
-      DURABILITY: 4
-      KNOCKBACK: 2
-      DAMAGE_ALL: 10
-      FIRE_ASPECT: 3
-
-  银河头盔_1:
-    material: DIAMOND_HELMET
-    display-name: "§5§l银河终极§7头盔"
-    amount: 1
-    enchantments:
-      DURABILITY: 4
-      PROTECTION_ENVIRONMENTAL: 8
-
-  银河胸甲_1:
-    material: DIAMOND_CHESTPLATE
-    display-name: "§5§l银河终极§7胸甲"
-    amount: 1
-    enchantments:
-      DURABILITY: 4
-      PROTECTION_ENVIRONMENTAL: 8
-
-  银河护腿_1:
-    material: DIAMOND_LEGGINGS
-    display-name: "§5§l银河终极§7护腿"
-    amount: 1
-    enchantments:
-      DURABILITY: 4
-      PROTECTION_ENVIRONMENTAL: 8
-
-  银河鞋子_1:
-    material: DIAMOND_BOOTS
-    display-name: "§5§l银河终极§7靴子"
-    amount: 1
-    enchantments:
-      DURABILITY: 4
-      PROTECTION_ENVIRONMENTAL: 8
-
-  银河矿工之斧_1:
-    material: DIAMOND_AXE
-    display-name: "§5§l银河矿工§7之斧"
-    amount: 1
-    enchantments:
-      DURABILITY: 4
-      DIG_SPEED: 5
-      LOOT_BONUS_BLOCKS: 3
-
-  银河剑_2:
-    material: DIAMOND_SWORD
-    display-name: "§5§l银河至尊§7剑"
-    amount: 1
-    enchantments:
-      DURABILITY: 5
-      KNOCKBACK: 3
-      DAMAGE_ALL: 12
-      FIRE_ASPECT: 4
-
-  银河头盔_2:
-    material: DIAMOND_HELMET
-    display-name: "§5§l银河至尊§7头盔"
-    amount: 1
-    enchantments:
-      DURABILITY: 5
-      PROTECTION_ENVIRONMENTAL: 10
-
-  银河胸甲_2:
-    material: DIAMOND_CHESTPLATE
-    display-name: "§5§l银河至尊§7胸甲"
-    amount: 1
-    enchantments:
-      DURABILITY: 5
-      PROTECTION_ENVIRONMENTAL: 10
-
-  银河护腿_2:
-    material: DIAMOND_LEGGINGS
-    display-name: "§5§l银河至尊§7护腿"
-    amount: 1
-    enchantments:
-      DURABILITY: 5
-      PROTECTION_ENVIRONMENTAL: 10
-
-  银河鞋子_2:
-    material: DIAMOND_BOOTS
-    display-name: "§5§l银河至尊§7靴子"
-    amount: 1
-    enchantments:
-      DURABILITY: 5
-      PROTECTION_ENVIRONMENTAL: 10
-
-  银河矿工之斧_2:
-    material: DIAMOND_AXE
-    display-name: "§5§l银河至尊§7之斧"
-    amount: 1
-    enchantments:
-      DURABILITY: 5
-      DIG_SPEED: 6
-      LOOT_BONUS_BLOCKS: 4
+  # 新银河系列 - EZItem模板物品
+  # 这些物品将通过EZItem API获取，不需要在配置文件中定义具体属性
 
 # 礼包奖励配置 - 定义每个礼包等级包含的物品
 kit_rewards:
@@ -2098,26 +1990,45 @@ kit_rewards:
   galaxy:
     1:
       items:
-        - "银河剑_1"
-        - "银河头盔_1"
-        - "银河胸甲_1"
-        - "银河护腿_1"
-        - "银河鞋子_1"
-        - "银河矿工之斧_1"
+        - "新银河1_剑"
+        - "新银河1_头盔"
+        - "新银河1_胸甲"
+        - "新银河1_裤"
+        - "新银河1_鞋"
       special_rewards:
-        - "§7• 银河1级套装"
-        - "§d• 至尊银河装备"
+        - "§7• 新银河1级套装"
+        - "§d• 新银河系列装备"
         - "§5• 银河之力"
     2:
       items:
-        - "银河剑_2"
-        - "银河头盔_2"
-        - "银河胸甲_2"
-        - "银河护腿_2"
-        - "银河鞋子_2"
-        - "银河矿工之斧_2"
+        - "新银河2_剑"
+        - "新银河2_头盔"
+        - "新银河2_胸甲"
+        - "新银河2_裤"
+        - "新银河2_鞋"
       special_rewards:
-        - "§7• 银河2级套装"
-        - "§d• 顶级银河装备"
-        - "§5• 银河王者专属"
-        - "§c• 服务器最高级" 
+        - "§7• 新银河2级套装"
+        - "§d• 新银河进阶装备"
+        - "§5• 银河之力增强"
+    3:
+      items:
+        - "新银河3_剑"
+        - "新银河3_头盔"
+        - "新银河3_胸甲"
+        - "新银河3_裤"
+        - "新银河3_鞋"
+      special_rewards:
+        - "§7• 新银河3级套装"
+        - "§d• 新银河高级装备"
+        - "§5• 银河之力强化"
+    4:
+      items:
+        - "新银河4_剑"
+        - "新银河4_头盔"
+        - "新银河4_胸甲"
+        - "新银河4_裤"
+        - "新银河4_鞋"
+      special_rewards:
+        - "§7• 新银河4级套装"
+        - "§d• 新银河终极装备"
+        - "§5• 银河之力巅峰" 

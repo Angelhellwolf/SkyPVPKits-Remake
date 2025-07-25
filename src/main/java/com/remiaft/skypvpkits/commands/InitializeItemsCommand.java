@@ -90,7 +90,7 @@ public class InitializeItemsCommand implements CommandExecutor {
         configContent.append("    description: \"基础装备套装\"\n");
         configContent.append("    slot: 10\n");
         configContent.append("    material: \"LEATHER_HELMET\"\n");
-        configContent.append("    levels: 4\n");
+        configContent.append("    levels: 5\n");
         configContent.append("  月球:\n");
         configContent.append("    name: \"§f月球礼包\"\n");
         configContent.append("    description: \"月球探索套装\"\n");
@@ -116,11 +116,11 @@ public class InitializeItemsCommand implements CommandExecutor {
         configContent.append("    material: \"DIAMOND_PICKAXE\"\n");
         configContent.append("    levels: 4\n");
         configContent.append("  银河:\n");
-        configContent.append("    name: \"§d银河礼包\"\n");
-        configContent.append("    description: \"银河战士套装\"\n");
+        configContent.append("    name: \"§d新银河礼包\"\n");
+        configContent.append("    description: \"新银河系列装备\"\n");
         configContent.append("    slot: 32\n");
         configContent.append("    material: \"DIAMOND_SWORD\"\n");
-        configContent.append("    levels: 2\n\n");
+        configContent.append("    levels: 4\n\n");
         
         // 添加解析的物品数据
         configContent.append("# 物品定义 (从 items.yml 解析)\n");

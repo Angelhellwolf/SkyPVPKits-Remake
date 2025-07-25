@@ -2,7 +2,6 @@ package com.remiaft.skypvpkits.managers;
 
 import com.remiaft.skypvpkits.SkyPVPKits;
 import com.remiaft.skypvpkits.data.PlayerKitData;
-import me.clip.placeholderapi.PlaceholderAPI;
 import org.bukkit.Bukkit;
 import org.bukkit.Material;
 import org.bukkit.entity.Player;
@@ -12,14 +11,7 @@ import org.bukkit.inventory.ItemStack;
 import org.bukkit.inventory.meta.ItemMeta;
 import org.bukkit.scheduler.BukkitTask;
 
-import java.util.ArrayList;
-import java.util.Arrays;
-import java.util.HashMap;
-import java.util.HashSet;
-import java.util.List;
-import java.util.Map;
-import java.util.Set;
-import java.util.UUID;
+import java.util.*;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 
@@ -115,7 +107,6 @@ public class MenuManager {
             updateMainMenuIcons(player.getOpenInventory().getTopInventory(), player);
         } else if (title.contains("装备展示")) {
             // 装备展示菜单不需要刷新，保持静态显示
-            return;
         } else {
             // 刷新礼包详情菜单
             String kitType = extractKitTypeFromTitle(title);
@@ -359,7 +350,7 @@ public class MenuManager {
         ItemStack closeItem = new ItemStack(Material.BARRIER);
         ItemMeta closeMeta = closeItem.getItemMeta();
         closeMeta.setDisplayName("§c关闭菜单");
-        closeMeta.setLore(Arrays.asList("§7点击关闭此菜单"));
+        closeMeta.setLore(Collections.singletonList("§7点击关闭此菜单"));
         closeItem.setItemMeta(closeMeta);
         inventory.setItem(49, closeItem);
     }
@@ -417,7 +408,7 @@ public class MenuManager {
             ItemStack backItem = new ItemStack(Material.ARROW);
             ItemMeta backMeta = backItem.getItemMeta();
             backMeta.setDisplayName("§e返回主菜单");
-            backMeta.setLore(Arrays.asList("§7点击返回主菜单"));
+            backMeta.setLore(Collections.singletonList("§7点击返回主菜单"));
             backItem.setItemMeta(backMeta);
             inventory.setItem(49, backItem);
         });
@@ -565,8 +556,10 @@ public class MenuManager {
                 }
                 
             case "galaxy":
-                // 银河系列：银河剑_1, 银河头盔_1, 等
-                return "银河" + equipType + "_" + level;
+                // 新银河系列：新银河1_剑, 新银河1_头盔, 等
+                String galaxyEquipType = equipType;
+                if (equipType.equals("护腿")) galaxyEquipType = "裤";
+                return "新银河" + level + "_" + galaxyEquipType;
                 
             default:
                 return level + kitType + equipType;
@@ -637,7 +630,7 @@ public class MenuManager {
         ItemStack backItem = new ItemStack(Material.ARROW);
         ItemMeta backMeta = backItem.getItemMeta();
         backMeta.setDisplayName("§e返回礼包菜单");
-        backMeta.setLore(Arrays.asList("§7点击返回 " + configManager.getKitDisplayName(kitType) + " 菜单"));
+        backMeta.setLore(Collections.singletonList("§7点击返回 " + configManager.getKitDisplayName(kitType) + " 菜单"));
         backItem.setItemMeta(backMeta);
         inventory.setItem(49, backItem);
     }
@@ -747,11 +740,7 @@ public class MenuManager {
             return;
         }
         
-        // 银河礼包特殊处理
-        if (kitType.equals("galaxy")) {
-            displayGalaxyNotSupportedMessage(player, level);
-            return;
-        }
+
         
         String kitName = configManager.getKitDisplayName(kitType);
         String title = "§8装备展示 §7- " + kitName + " §e等级" + level;
@@ -796,19 +785,8 @@ public class MenuManager {
         
         player.sendMessage("§8专注挖矿效率，无装备展示~ §f(´∀｀)");
     }
-    
-    /**
-     * 显示银河礼包不支持展示的提示信息
-     */
-    private void displayGalaxyNotSupportedMessage(Player player, int level) {
-        String kitName = configManager.getKitDisplayName("galaxy");
-        player.sendMessage("§6★ " + kitName + " §6(｡◕‿◕｡)");
-        player.sendMessage("§7至尊级礼包");
-        player.sendMessage("§7装备展示暂未开放");
-        player.sendMessage("§8如需了解详情请联系管理员~");
-        player.sendMessage("§8QQ：2076049239 §f♡");
-    }
-    
+
+
     /**
      * 从配置文件加载物品
      */
@@ -937,8 +915,9 @@ public class MenuManager {
                 }
                 break;
             case "galaxy":
-                lore.add("§d银河系最强装备");
-                lore.add("§6至尊级别保护");
+                lore.add("§d新银河系列装备");
+                lore.add("§6顶级防护和攻击");
+                lore.add("§5银河之力加持");
                 break;
         }
         

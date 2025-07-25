@@ -3,14 +3,12 @@ package com.remiaft.skypvpkits.utils;
 import com.remiaft.skypvpkits.SkyPVPKits;
 import org.bukkit.Material;
 import org.bukkit.configuration.ConfigurationSection;
-import org.bukkit.configuration.file.YamlConfiguration;
 import org.bukkit.configuration.file.FileConfiguration;
 import org.bukkit.enchantments.Enchantment;
 import org.bukkit.inventory.ItemStack;
 import org.bukkit.inventory.meta.ItemMeta;
 import org.bukkit.inventory.meta.LeatherArmorMeta;
 
-import java.io.File;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -374,7 +372,9 @@ public class ItemLoader {
             case "mining":
                 return level + "挖矿mining" + equipType;
             case "galaxy":
-                return level + "银河galaxy" + equipType;
+                String galaxyEquipType = equipType;
+                if (equipType.equals("护腿")) galaxyEquipType = "裤";
+                return "新银河" + level + "_" + galaxyEquipType;
             default:
                 return kitType + level + "_" + equipType;
         }

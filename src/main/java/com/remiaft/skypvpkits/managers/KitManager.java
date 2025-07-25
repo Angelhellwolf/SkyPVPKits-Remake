@@ -4,22 +4,20 @@ import com.remiaft.skypvpkits.SkyPVPKits;
 import com.remiaft.skypvpkits.data.PlayerKitData;
 import me.clip.placeholderapi.PlaceholderAPI;
 import org.bukkit.Bukkit;
-import org.bukkit.entity.Player;
-
-import java.time.LocalDateTime;
-import java.util.*;
-import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.Executors;
-import java.util.concurrent.ScheduledExecutorService;
-import java.util.concurrent.ThreadPoolExecutor;
-import java.util.concurrent.TimeUnit;
-import java.util.concurrent.atomic.AtomicInteger;
 import org.bukkit.Material;
+import org.bukkit.entity.Player;
 import org.bukkit.inventory.ItemStack;
 import org.bukkit.inventory.meta.PotionMeta;
 import org.bukkit.potion.PotionEffect;
 import org.bukkit.potion.PotionEffectType;
+
+import java.time.LocalDateTime;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.List;
+import java.util.Map;
+import java.util.concurrent.*;
+import java.util.concurrent.atomic.AtomicInteger;
 
 /**
  * 礼包管理器
@@ -496,13 +494,12 @@ public class KitManager {
                 break;
                 
             case "galaxy":
-                // 银河系列：银河剑_1, 银河头盔_1, 等
-                Bukkit.dispatchCommand(Bukkit.getConsoleSender(), "ezitem give " + playerName + " 银河剑_" + level);
-                Bukkit.dispatchCommand(Bukkit.getConsoleSender(), "ezitem give " + playerName + " 银河头盔_" + level);
-                Bukkit.dispatchCommand(Bukkit.getConsoleSender(), "ezitem give " + playerName + " 银河胸甲_" + level);
-                Bukkit.dispatchCommand(Bukkit.getConsoleSender(), "ezitem give " + playerName + " 银河护腿_" + level);
-                Bukkit.dispatchCommand(Bukkit.getConsoleSender(), "ezitem give " + playerName + " 银河鞋子_" + level);
-                Bukkit.dispatchCommand(Bukkit.getConsoleSender(), "ezitem give " + playerName + " 银河矿工之斧_" + level);
+                // 新银河系列：新银河1_剑, 新银河1_头盔, 等
+                Bukkit.dispatchCommand(Bukkit.getConsoleSender(), "ezitem give " + playerName + " 新银河" + level + "_剑");
+                Bukkit.dispatchCommand(Bukkit.getConsoleSender(), "ezitem give " + playerName + " 新银河" + level + "_头盔");
+                Bukkit.dispatchCommand(Bukkit.getConsoleSender(), "ezitem give " + playerName + " 新银河" + level + "_胸甲");
+                Bukkit.dispatchCommand(Bukkit.getConsoleSender(), "ezitem give " + playerName + " 新银河" + level + "_裤");
+                Bukkit.dispatchCommand(Bukkit.getConsoleSender(), "ezitem give " + playerName + " 新银河" + level + "_鞋");
                 break;
         }
     }
@@ -526,7 +523,7 @@ public class KitManager {
                 
             case "galaxy":
                 // 银河金苹果 - 使用附魔金苹果
-                int galaxyApples = 16 + (10 * level);
+                int galaxyApples = 16 + (5 * level);
                 giveGoldenApples(player, galaxyApples, true);
                 break;
                 

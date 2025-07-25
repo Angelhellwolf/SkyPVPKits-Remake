@@ -1,7 +1,11 @@
 package com.remiaft.skypvpkits.utils;
 
-import java.io.*;
-import java.util.*;
+import java.io.File;
+import java.io.FileWriter;
+import java.util.Arrays;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
 
 public class ItemConfigGenerator {
     
@@ -26,7 +30,20 @@ public class ItemConfigGenerator {
             "1火星spark剑", "1火星spark头盔", "1火星spark胸甲", "1火星spark护腿", "1火星spark鞋子",
             "2火星spark剑", "2火星spark头盔", "2火星spark胸甲", "2火星spark护腿", "2火星spark鞋子",
             "3火星spark剑", "3火星spark头盔", "3火星spark胸甲", "3火星spark护腿", "3火星spark鞋子",
-            "4火星spark剑"
+                "4火星spark剑", "4火星spark头盔", "4火星spark胸甲", "4火星spark护腿", "4火星spark鞋子",
+                "1太阳sun剑", "1太阳sun头盔", "1太阳sun胸甲", "1太阳sun护腿", "1太阳sun鞋子",
+                "2太阳sun剑", "2太阳sun头盔", "2太阳sun胸甲", "2太阳sun护腿", "2太阳sun鞋子",
+                "3太阳sun剑", "3太阳sun头盔", "3太阳sun胸甲", "3太阳sun护腿", "3太阳sun鞋子",
+                "4太阳sun剑", "4太阳sun头盔", "4太阳sun胸甲", "4太阳sun护腿", "4太阳sun鞋子",
+                "5太阳sun剑", "5太阳sun头盔", "5太阳sun胸甲", "5太阳sun护腿", "5太阳sun鞋子",
+                "1挖矿mining镐", "1挖矿mining头盔", "1挖矿mining胸甲", "1挖矿mining护腿", "1挖矿mining鞋子",
+                "2挖矿mining镐", "2挖矿mining头盔", "2挖矿mining胸甲", "2挖矿mining护腿", "2挖矿mining鞋子",
+                "3挖矿mining镐", "3挖矿mining头盔", "3挖矿mining胸甲", "3挖矿mining护腿", "3挖矿mining鞋子",
+                "4挖矿mining镐", "4挖矿mining头盔", "4挖矿mining胸甲", "4挖矿mining护腿", "4挖矿mining鞋子",
+                "新银河1_剑", "新银河1_头盔", "新银河1_胸甲", "新银河1_裤", "新银河1_鞋",
+                "新银河2_剑", "新银河2_头盔", "新银河2_胸甲", "新银河2_裤", "新银河2_鞋",
+                "新银河3_剑", "新银河3_头盔", "新银河3_胸甲", "新银河3_裤", "新银河3_鞋",
+                "新银河4_剑", "新银河4_头盔", "新银河4_胸甲", "新银河4_裤", "新银河4_鞋"
         );
         
         // 生成配置并写入文件
@@ -75,7 +92,7 @@ public class ItemConfigGenerator {
             
             // 同时输出到控制台
             System.out.println("\n=== 生成的配置内容 ===");
-            System.out.println(itemsConfig.toString());
+            System.out.println(itemsConfig);
             
         } catch (Exception e) {
             e.printStackTrace();
@@ -98,46 +115,98 @@ public class ItemConfigGenerator {
         Map<String, Integer> enchantments = new HashMap<>();
         
         if (itemName.contains("剑") || itemName.contains("sword")) {
-            enchantments.put("DAMAGE_ALL", Math.min(level + 4, 10));
-            enchantments.put("DURABILITY", 3);
-            if (level >= 2) {
-                enchantments.put("FIRE_ASPECT", Math.min(level - 1, 2));
+            if (itemName.contains("新银河")) {
+                // 新银河系列剑有更强的附魔
+                enchantments.put("DAMAGE_ALL", Math.min(level + 6, 15));
+                enchantments.put("DURABILITY", Math.min(level + 2, 5));
+                enchantments.put("FIRE_ASPECT", Math.min(level + 1, 4));
+                enchantments.put("KNOCKBACK", Math.min(level, 3));
+                if (level >= 3) {
+                    enchantments.put("LOOT_BONUS_MOBS", Math.min(level - 1, 3));
+                }
+            } else {
+                enchantments.put("DAMAGE_ALL", Math.min(level + 4, 10));
+                enchantments.put("DURABILITY", 3);
+                if (level >= 2) {
+                    enchantments.put("FIRE_ASPECT", Math.min(level - 1, 2));
+                }
+                if (level >= 3) {
+                    enchantments.put("KNOCKBACK", 1);
+                }
             }
-            if (level >= 3) {
-                enchantments.put("KNOCKBACK", 1);
+        } else if (itemName.contains("头") || itemName.contains("helmet") || itemName.contains("头盔")) {
+            if (itemName.contains("新银河")) {
+                // 新银河系列头盔有更强的附魔
+                enchantments.put("PROTECTION_ENVIRONMENTAL", Math.min(level + 5, 12));
+                enchantments.put("DURABILITY", Math.min(level + 2, 5));
+                enchantments.put("PROTECTION_PROJECTILE", Math.min(level + 2, 5));
+                enchantments.put("PROTECTION_FALL", Math.min(level + 1, 5));
+                enchantments.put("OXYGEN", Math.min(level, 3));
+            } else {
+                enchantments.put("PROTECTION_ENVIRONMENTAL", Math.min(level + 3, 8));
+                enchantments.put("DURABILITY", Math.min(level + 1, 3));
+                if (itemName.contains("月球") || itemName.contains("火星")) {
+                    enchantments.put("PROTECTION_PROJECTILE", Math.min(level + 1, 4));
+                    enchantments.put("PROTECTION_FALL", Math.min(level, 4));
+                }
             }
-        } else if (itemName.contains("头") || itemName.contains("helmet")) {
-            enchantments.put("PROTECTION_ENVIRONMENTAL", Math.min(level + 3, 8));
-            enchantments.put("DURABILITY", Math.min(level + 1, 3));
-            if (itemName.contains("月球") || itemName.contains("火星")) {
-                enchantments.put("PROTECTION_PROJECTILE", Math.min(level + 1, 4));
-                enchantments.put("PROTECTION_FALL", Math.min(level, 4));
+        } else if (itemName.contains("甲") || itemName.contains("chest") || itemName.contains("胸甲")) {
+            if (itemName.contains("新银河")) {
+                // 新银河系列胸甲有更强的附魔
+                enchantments.put("PROTECTION_ENVIRONMENTAL", Math.min(level + 5, 12));
+                enchantments.put("DURABILITY", Math.min(level + 2, 5));
+                enchantments.put("PROTECTION_PROJECTILE", Math.min(level + 2, 5));
+                enchantments.put("PROTECTION_FALL", Math.min(level + 1, 5));
+                enchantments.put("THORNS", Math.min(level, 3));
+            } else {
+                enchantments.put("PROTECTION_ENVIRONMENTAL", Math.min(level + 3, 9));
+                enchantments.put("DURABILITY", Math.min(level + 1, 3));
+                if (itemName.contains("月球") || itemName.contains("火星")) {
+                    enchantments.put("PROTECTION_PROJECTILE", Math.min(level + 1, 4));
+                    enchantments.put("PROTECTION_FALL", Math.min(level, 4));
+                }
             }
-        } else if (itemName.contains("甲") || itemName.contains("chest")) {
-            enchantments.put("PROTECTION_ENVIRONMENTAL", Math.min(level + 3, 9));
-            enchantments.put("DURABILITY", Math.min(level + 1, 3));
-            if (itemName.contains("月球") || itemName.contains("火星")) {
-                enchantments.put("PROTECTION_PROJECTILE", Math.min(level + 1, 4));
-                enchantments.put("PROTECTION_FALL", Math.min(level, 4));
-            }
-        } else if (itemName.contains("腿") || itemName.contains("leg")) {
-            enchantments.put("PROTECTION_ENVIRONMENTAL", Math.min(level + 3, 9));
-            enchantments.put("DURABILITY", Math.min(level + 1, 3));
-            if (itemName.contains("月球") || itemName.contains("火星")) {
-                enchantments.put("PROTECTION_PROJECTILE", Math.min(level + 1, 4));
-                enchantments.put("PROTECTION_FALL", Math.min(level, 4));
+        } else if (itemName.contains("腿") || itemName.contains("leg") || itemName.contains("裤")) {
+            if (itemName.contains("新银河")) {
+                // 新银河系列护腿有更强的附魔
+                enchantments.put("PROTECTION_ENVIRONMENTAL", Math.min(level + 5, 12));
+                enchantments.put("DURABILITY", Math.min(level + 2, 5));
+                enchantments.put("PROTECTION_PROJECTILE", Math.min(level + 2, 5));
+                enchantments.put("PROTECTION_FALL", Math.min(level + 1, 5));
+            } else {
+                enchantments.put("PROTECTION_ENVIRONMENTAL", Math.min(level + 3, 9));
+                enchantments.put("DURABILITY", Math.min(level + 1, 3));
+                if (itemName.contains("月球") || itemName.contains("火星")) {
+                    enchantments.put("PROTECTION_PROJECTILE", Math.min(level + 1, 4));
+                    enchantments.put("PROTECTION_FALL", Math.min(level, 4));
+                }
             }
         } else if (itemName.contains("鞋") || itemName.contains("boot")) {
-            enchantments.put("PROTECTION_ENVIRONMENTAL", Math.min(level + 3, 8));
-            enchantments.put("DURABILITY", Math.min(level + 1, 3));
-            if (itemName.contains("月球") || itemName.contains("火星")) {
-                enchantments.put("PROTECTION_PROJECTILE", Math.min(level + 1, 4));
-                enchantments.put("PROTECTION_FALL", Math.min(level, 4));
+            if (itemName.contains("新银河")) {
+                // 新银河系列靴子有更强的附魔
+                enchantments.put("PROTECTION_ENVIRONMENTAL", Math.min(level + 5, 12));
+                enchantments.put("DURABILITY", Math.min(level + 2, 5));
+                enchantments.put("PROTECTION_PROJECTILE", Math.min(level + 2, 5));
+                enchantments.put("PROTECTION_FALL", Math.min(level + 1, 5));
+                enchantments.put("DEPTH_STRIDER", Math.min(level, 3));
+            } else {
+                enchantments.put("PROTECTION_ENVIRONMENTAL", Math.min(level + 3, 8));
+                enchantments.put("DURABILITY", Math.min(level + 1, 3));
+                if (itemName.contains("月球") || itemName.contains("火星")) {
+                    enchantments.put("PROTECTION_PROJECTILE", Math.min(level + 1, 4));
+                    enchantments.put("PROTECTION_FALL", Math.min(level, 4));
+                }
             }
         }
         
         if (itemName.contains("火星") || itemName.contains("spark")) {
             enchantments.put("PROTECTION_FIRE", Math.min(level, 4));
+        }
+
+        if (itemName.contains("新银河")) {
+            // 新银河系列特殊效果
+            enchantments.put("PROTECTION_FIRE", Math.min(level + 1, 5));
+            enchantments.put("PROTECTION_EXPLOSIONS", Math.min(level, 4));
         }
         
         if (!enchantments.isEmpty()) {
@@ -155,22 +224,22 @@ public class ItemConfigGenerator {
     
     private static String inferMaterial(String itemName) {
         if (itemName.contains("剑")) {
-            if (itemName.contains("地球")) return "DIAMOND_SWORD";
+            if (itemName.contains("地球") || itemName.contains("新银河")) return "DIAMOND_SWORD";
             return "DIAMOND_SWORD";
-        } else if (itemName.contains("头")) {
-            if (itemName.contains("地球")) return "DIAMOND_HELMET";
+        } else if (itemName.contains("头") || itemName.contains("头盔")) {
+            if (itemName.contains("地球") || itemName.contains("新银河")) return "DIAMOND_HELMET";
             if (itemName.contains("天空")) return "LEATHER_HELMET";
             return "DIAMOND_HELMET";
-        } else if (itemName.contains("甲")) {
-            if (itemName.contains("地球")) return "DIAMOND_CHESTPLATE";
+        } else if (itemName.contains("甲") || itemName.contains("胸甲")) {
+            if (itemName.contains("地球") || itemName.contains("新银河")) return "DIAMOND_CHESTPLATE";
             if (itemName.contains("天空")) return "LEATHER_CHESTPLATE";
             return "DIAMOND_CHESTPLATE";
-        } else if (itemName.contains("腿")) {
-            if (itemName.contains("地球")) return "DIAMOND_LEGGINGS";
+        } else if (itemName.contains("腿") || itemName.contains("裤")) {
+            if (itemName.contains("地球") || itemName.contains("新银河")) return "DIAMOND_LEGGINGS";
             if (itemName.contains("天空")) return "LEATHER_LEGGINGS";
             return "DIAMOND_LEGGINGS";
         } else if (itemName.contains("鞋")) {
-            if (itemName.contains("地球")) return "DIAMOND_BOOTS";
+            if (itemName.contains("地球") || itemName.contains("新银河")) return "DIAMOND_BOOTS";
             if (itemName.contains("天空")) return "LEATHER_BOOTS";
             return "DIAMOND_BOOTS";
         } else if (itemName.contains("金苹果")) {
@@ -209,6 +278,13 @@ public class ItemConfigGenerator {
             if (itemName.contains("甲")) return "§c§l火星" + level + "§7胸甲";
             if (itemName.contains("腿")) return "§c§l火星" + level + "§7护腿";
             if (itemName.contains("鞋")) return "§c§l火星" + level + "§7靴子";
+        } else if (itemName.contains("新银河")) {
+            String level = itemName.substring(itemName.indexOf("新银河") + 3, itemName.indexOf("新银河") + 4);
+            if (itemName.contains("剑")) return "§d§l新银河" + level + "§7剑";
+            if (itemName.contains("头盔")) return "§d§l新银河" + level + "§7头盔";
+            if (itemName.contains("胸甲")) return "§d§l新银河" + level + "§7胸甲";
+            if (itemName.contains("裤")) return "§d§l新银河" + level + "§7护腿";
+            if (itemName.contains("鞋")) return "§d§l新银河" + level + "§7靴子";
         } else if (itemName.contains("金苹果")) {
             if (itemName.contains("附魔")) return "§6附魔金苹果";
             return "§6普通金苹果";
@@ -222,6 +298,8 @@ public class ItemConfigGenerator {
                 return Integer.parseInt(itemName.substring(0, 1));
             } else if (itemName.contains("地球")) {
                 return Integer.parseInt(itemName.substring(itemName.indexOf("地球") + 2, itemName.indexOf("地球") + 3));
+            } else if (itemName.contains("新银河")) {
+                return Integer.parseInt(itemName.substring(itemName.indexOf("新银河") + 3, itemName.indexOf("新银河") + 4));
             }
         } catch (Exception e) {
             // ignore
