@@ -191,20 +191,42 @@ public class MenuListener implements Listener {
         
         // 检查是否为等级图标 - 支持多种材料类型
         Material itemType = clickedItem.getType();
-        boolean isOwnedKit = (itemType == Material.EMERALD_BLOCK || itemType == Material.EMERALD);
-        boolean isUnownedKit = (itemType == Material.REDSTONE_BLOCK || itemType == Material.REDSTONE || 
-                               itemType == Material.BARRIER || itemType == Material.COAL_BLOCK);
+        boolean isPermanentOwnedKit = itemType == Material.EMERALD_BLOCK;
+        boolean isTemporaryOwnedKit = itemType == Material.EMERALD;
+        boolean isBlockedByHigherLevel = itemType == Material.BARRIER;
+        boolean isLockedByPreviousPermanent = itemType == Material.COAL_BLOCK;
+        boolean isUnownedKit = (itemType == Material.REDSTONE_BLOCK || itemType == Material.REDSTONE);
         
-        if (isOwnedKit) {
+        if (isPermanentOwnedKit) {
             // 已拥有的等级 - 领取奖励
             claimKitReward(player, kitType, level);
+        } else if (isTemporaryOwnedKit) {
+            if (isShiftClick && isLeftClick) {
+                purchaseKitPermanent(player, kitType, level);
+            } else if (isRightClick || isMiddleClick) {
+                menuManager.openItemDisplayMenu(player, kitType, level);
+            } else {
+                claimKitReward(player, kitType, level);
+            }
+        } else if (isBlockedByHigherLevel) {
+            if (isRightClick || isMiddleClick) {
+                menuManager.openItemDisplayMenu(player, kitType, level);
+                return;
+            }
+            player.sendMessage(plugin.getConfigManager().getMessage("already_owned"));
+        } else if (isLockedByPreviousPermanent) {
+            if (isRightClick || isMiddleClick) {
+                menuManager.openItemDisplayMenu(player, kitType, level);
+                return;
+            }
+            player.sendMessage("§c需要先永久拥有等级 " + (level - 1) + " 才能购买更高等级礼包");
         } else if (isUnownedKit) {
             // 未拥有的等级 - 根据点击类型决定购买方式
-                                    if (isLeftClick) {
-                            // 左键：点券永久购买
-                            purchaseAndClaimKit(player, kitType, level);
+            if (isShiftClick && isLeftClick) {
+                // Shift + 左键：硬币月付购买
+                purchaseKitMonthlyWithCoins(player, kitType, level);
             } else if (isLeftClick) {
-                // 左键：点券永久购买并领取
+                // 左键：点券永久购买
                 purchaseAndClaimKit(player, kitType, level);
             } else if (isRightClick) {
                 // 右键：打开物品展示菜单
@@ -320,6 +342,16 @@ public class MenuListener implements Listener {
     private void showKitInfo(Player player, String kitType) {
         String kitName = plugin.getConfigManager().getKitDisplayName(kitType);
         player.sendMessage("§6★ " + kitName + " §f(๑•̀ㅂ•́)و");
+        if ("zxgy".equals(kitType)) {
+            player.sendMessage("§7装备配置：战斧·战弓·头盔·胸甲·护腿·靴子");
+            player.sendMessage("§7核心效果：§d星辰的惩罚 §7与专属弓箭特效");
+            return;
+        }
+        if ("ywxc".equals(kitType)) {
+            player.sendMessage("§7装备配置：观星剑·巡天弓·头盔·胸甲·护腿·靴子");
+            player.sendMessage("§7核心效果：§b三次命中压生命恢复 §7与高防星辉减伤");
+            return;
+        }
         player.sendMessage("§7装备配置：剑·头盔·胸甲·护腿·靴子");
     }
     
@@ -382,6 +414,20 @@ public class MenuListener implements Listener {
                                 });
                         
                         // 刷新菜单
+                        refreshMenu(player, kitType);
+                    } else {
+                        handlePurchaseError(player, result);
+                    }
+                });
+    }
+
+    private void purchaseKitPermanent(Player player, String kitType, int level) {
+        kitManager.purchaseKitPermanent(player, kitType, level)
+                .thenAccept(result -> {
+                    if (result.isSuccess()) {
+                        player.sendMessage("§a✦ 已购买永久版！ §f" +
+                                plugin.getConfigManager().getKitDisplayName(kitType) +
+                                " Lv." + level + " §a(ﾉ◕ヮ◕)ﾉ*:･ﾟ✧");
                         refreshMenu(player, kitType);
                     } else {
                         handlePurchaseError(player, result);
@@ -564,8 +610,19 @@ public class MenuListener implements Listener {
      */
     private void handlePurchaseError(Player player, KitManager.PurchaseResult result) {
         switch (result.getErrorCode()) {
+            case "already_owned":
+            case "higher_level_owned":
+                player.sendMessage(plugin.getConfigManager().getMessage("already_owned"));
+                break;
+            case "need_previous_permanent_level":
+                player.sendMessage("§c需要先永久拥有等级 " + result.getAmount() + " 才能购买更高等级礼包");
+                break;
+            case "need_previous_level":
             case "cannot_purchase":
-                player.sendMessage(plugin.getConfigManager().getMessage("need_previous_level"));
+                player.sendMessage(plugin.getConfigManager().getMessage(
+                        "need_previous_level",
+                        "level", String.valueOf(result.getAmount())
+                ));
                 break;
             case "insufficient_points":
                 String pointsMsg = plugin.getConfigManager().getMessage("insufficient_points")

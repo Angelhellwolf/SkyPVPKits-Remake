@@ -4,6 +4,7 @@ import com.remiaft.skypvpkits.SkyPVPKits;
 import com.remiaft.skypvpkits.data.PlayerKitData;
 import org.bukkit.Bukkit;
 import org.bukkit.Material;
+import org.bukkit.enchantments.Enchantment;
 import org.bukkit.entity.Player;
 import org.bukkit.inventory.Inventory;
 import org.bukkit.inventory.ItemFlag;
@@ -22,15 +23,17 @@ import java.util.concurrent.ConcurrentHashMap;
  * @author AngelHell
  */
 public class MenuManager {
+
+    private static final int[] MAIN_MENU_ICON_SLOTS = {20, 21, 22, 23, 24, 29, 30, 31, 32};
+    private static final long AUTO_REFRESH_INTERVAL_TICKS = 600L;
     
     private final SkyPVPKits plugin;
     private final ConfigManager configManager;
     private final KitManager kitManager;
     
-    // 存储玩家当前打开的菜单信息
-    private final Map<UUID, String> playerMenus = new HashMap<>();
     private BukkitTask refreshTask;
     private final Set<UUID> openMenuPlayers = ConcurrentHashMap.newKeySet();
+    private final Set<UUID> refreshingMenuPlayers = ConcurrentHashMap.newKeySet();
     
     public MenuManager(SkyPVPKits plugin) {
         this.plugin = plugin;
@@ -46,21 +49,25 @@ public class MenuManager {
      */
     private void startAutoRefresh() {
         refreshTask = Bukkit.getScheduler().runTaskTimer(plugin, () -> {
+            if (openMenuPlayers.isEmpty()) {
+                return;
+            }
             for (UUID uuid : openMenuPlayers) {
                 Player player = Bukkit.getPlayer(uuid);
-                if (player != null && isPlayerInOurMenu(player)) {
-                    // 异步准备数据
-                    CompletableFuture.runAsync(() -> {
-                        // 这里可以做数据准备（如数据库、缓存等）
-                        // ...
-                        // 数据准备好后，主线程刷新UI
-                        Bukkit.getScheduler().runTask(plugin, () -> {
-                            refreshPlayerMenu(player); // 只做UI操作
-                        });
-                    });
+                if (player == null || !player.isOnline()) {
+                    openMenuPlayers.remove(uuid);
+                    refreshingMenuPlayers.remove(uuid);
+                    continue;
+                }
+                if (!isPlayerInRefreshableMenu(player)) {
+                    refreshingMenuPlayers.remove(uuid);
+                    continue;
+                }
+                if (refreshingMenuPlayers.add(uuid)) {
+                    refreshPlayerMenu(player);
                 }
             }
-        }, 100L, 100L); // 每5秒刷新一次
+        }, AUTO_REFRESH_INTERVAL_TICKS, AUTO_REFRESH_INTERVAL_TICKS); // 每30秒刷新一次
     }
     
     /**
@@ -70,6 +77,7 @@ public class MenuManager {
         if (refreshTask != null) {
             refreshTask.cancel();
         }
+        refreshingMenuPlayers.clear();
     }
     
     /**
@@ -80,17 +88,29 @@ public class MenuManager {
             return false;
         }
         String title = player.getOpenInventory().getTitle();
-        return title != null && (
-            title.contains("礼包商城") || 
-            title.contains("天空礼包") ||
-            title.contains("火星礼包") ||
-            title.contains("地球礼包") ||
-            title.contains("月球礼包") ||
-            title.contains("太阳礼包") ||
-            title.contains("挖矿礼包") ||
-            title.contains("银河礼包") ||
-            title.contains("装备展示")  // 添加装备展示菜单识别
-        );
+        if (title == null) {
+            return false;
+        }
+        if (title.contains("礼包商城") || title.contains("装备展示")) {
+            return true;
+        }
+
+        String cleanTitle = title.replaceAll("§.", "");
+        for (String kitType : KitManager.KIT_TYPES) {
+            String cleanKitName = configManager.getKitDisplayName(kitType).replaceAll("§.", "");
+            if (cleanTitle.contains(cleanKitName)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private boolean isPlayerInRefreshableMenu(Player player) {
+        if (!isPlayerInOurMenu(player)) {
+            return false;
+        }
+        String title = player.getOpenInventory().getTitle();
+        return title != null && !title.contains("礼包商城") && !title.contains("装备展示");
     }
     
     /**
@@ -98,21 +118,21 @@ public class MenuManager {
      */
     private void refreshPlayerMenu(Player player) {
         if (player.getOpenInventory() == null || player.getOpenInventory().getTopInventory() == null) {
+            refreshingMenuPlayers.remove(player.getUniqueId());
             return;
         }
         
         String title = player.getOpenInventory().getTitle();
-        if (title.contains("礼包商城")) {
-            // 刷新主菜单
-            updateMainMenuIcons(player.getOpenInventory().getTopInventory(), player);
-        } else if (title.contains("装备展示")) {
-            // 装备展示菜单不需要刷新，保持静态显示
+        if (title == null || title.contains("礼包商城") || title.contains("装备展示")) {
+            refreshingMenuPlayers.remove(player.getUniqueId());
+            return;
+        }
+
+        String kitType = extractKitTypeFromTitle(title);
+        if (kitType != null) {
+            updateKitDetailMenu(player.getOpenInventory().getTopInventory(), player, kitType);
         } else {
-            // 刷新礼包详情菜单
-            String kitType = extractKitTypeFromTitle(title);
-            if (kitType != null) {
-                updateKitDetailMenu(player.getOpenInventory().getTopInventory(), player, kitType);
-            }
+            refreshingMenuPlayers.remove(player.getUniqueId());
         }
     }
     
@@ -120,13 +140,11 @@ public class MenuManager {
      * 更新主菜单图标
      */
     private void updateMainMenuIcons(Inventory inventory, Player player) {
-        int[] iconSlots = {20, 21, 22, 23, 24, 29, 30};
-        
-        for (int i = 0; i < KitManager.KIT_TYPES.size() && i < iconSlots.length; i++) {
+        for (int i = 0; i < KitManager.KIT_TYPES.size() && i < MAIN_MENU_ICON_SLOTS.length; i++) {
             String kitType = KitManager.KIT_TYPES.get(i);
             if (configManager.isKitEnabled(kitType)) {
                 ItemStack icon = createKitIcon(player, kitType);
-                inventory.setItem(iconSlots[i], icon);
+                inventory.setItem(MAIN_MENU_ICON_SLOTS[i], icon);
             }
         }
     }
@@ -136,7 +154,7 @@ public class MenuManager {
      */
     private void updateKitDetailMenu(Inventory inventory, Player player, String kitType) {
         // 重新加载等级信息
-        loadKitLevels(inventory, player, kitType);
+        loadKitLevels(inventory, player, kitType, () -> refreshingMenuPlayers.remove(player.getUniqueId()));
     }
     
     /**
@@ -237,7 +255,7 @@ public class MenuManager {
         background.setItemMeta(meta);
         
         // 主菜单保护的位置：礼包图标位置 + 关闭按钮
-        int[] protectedSlots = {20, 21, 22, 23, 24, 29, 30, 49}; // 礼包图标位置 + 关闭按钮
+        int[] protectedSlots = {20, 21, 22, 23, 24, 29, 30, 31, 32, 49}; // 礼包图标位置 + 关闭按钮
         Set<Integer> protectedSet = new HashSet<>();
         for (int slot : protectedSlots) {
             protectedSet.add(slot);
@@ -317,7 +335,7 @@ public class MenuManager {
         background.setItemMeta(meta);
         
         // 装备展示位置（需要保护的位置）
-        int[] protectedSlots = {20, 11, 12, 21, 30, 49}; // 装备位置 + 返回按钮位置
+        int[] protectedSlots = {20, 11, 12, 21, 29, 30, 49}; // 装备位置 + 返回按钮位置
         Set<Integer> protectedSet = new HashSet<>();
         for (int slot : protectedSlots) {
             protectedSet.add(slot);
@@ -335,14 +353,11 @@ public class MenuManager {
      * 放置礼包图标
      */
     private void placeKitIcons(Inventory inventory, Player player) {
-        // 礼包图标位置 (3x3布局中心区域)
-        int[] iconSlots = {20, 21, 22, 23, 24, 29, 30}; // 天空、火星、地球、月球、太阳、挖矿、银河
-        
-        for (int i = 0; i < KitManager.KIT_TYPES.size() && i < iconSlots.length; i++) {
+        for (int i = 0; i < KitManager.KIT_TYPES.size() && i < MAIN_MENU_ICON_SLOTS.length; i++) {
             String kitType = KitManager.KIT_TYPES.get(i);
             if (configManager.isKitEnabled(kitType)) {
                 ItemStack icon = createKitIcon(player, kitType);
-                inventory.setItem(iconSlots[i], icon);
+                inventory.setItem(MAIN_MENU_ICON_SLOTS[i], icon);
             }
         }
         
@@ -393,39 +408,80 @@ public class MenuManager {
      * 异步加载礼包等级
      */
     private void loadKitLevels(Inventory inventory, Player player, String kitType) {
-        kitManager.getPlayerKitDataAsync(player).thenAccept(playerData -> {
-            int maxLevels = configManager.getKitLevels(kitType);
-            
-            // 等级图标位置
-            int[] levelSlots = {19, 20, 21, 22, 23, 28, 29, 30, 31, 32}; // 最多10个等级
-            
-            for (int level = 1; level <= maxLevels && level <= levelSlots.length; level++) {
-                ItemStack levelIcon = createLevelIcon(player, kitType, level, playerData);
-                inventory.setItem(levelSlots[level - 1], levelIcon);
-            }
-            
-            // 返回按钮
-            ItemStack backItem = new ItemStack(Material.ARROW);
-            ItemMeta backMeta = backItem.getItemMeta();
-            backMeta.setDisplayName("§e返回主菜单");
-            backMeta.setLore(Collections.singletonList("§7点击返回主菜单"));
-            backItem.setItemMeta(backMeta);
-            inventory.setItem(49, backItem);
-        });
+        loadKitLevels(inventory, player, kitType, null);
+    }
+
+    private void loadKitLevels(Inventory inventory, Player player, String kitType, Runnable completion) {
+        kitManager.getPlayerKitDataAsync(player)
+                .whenComplete((playerData, throwable) -> Bukkit.getScheduler().runTask(plugin, () -> {
+                    try {
+                        if (throwable != null) {
+                            plugin.getLogger().warning("刷新礼包菜单失败: " + throwable.getMessage());
+                            return;
+                        }
+                        renderKitLevels(inventory, player, kitType, playerData);
+                    } finally {
+                        if (completion != null) {
+                            completion.run();
+                        }
+                    }
+                }));
+    }
+
+    private void renderKitLevels(Inventory inventory, Player player, String kitType, List<PlayerKitData> playerData) {
+        int maxLevels = configManager.getKitLevels(kitType);
+
+        // 等级图标位置
+        int[] levelSlots = {19, 20, 21, 22, 23, 28, 29, 30, 31, 32}; // 最多10个等级
+
+        for (int level = 1; level <= maxLevels && level <= levelSlots.length; level++) {
+            ItemStack levelIcon = createLevelIcon(player, kitType, level, playerData);
+            inventory.setItem(levelSlots[level - 1], levelIcon);
+        }
+
+        // 返回按钮
+        ItemStack backItem = new ItemStack(Material.ARROW);
+        ItemMeta backMeta = backItem.getItemMeta();
+        backMeta.setDisplayName("§e返回主菜单");
+        backMeta.setLore(Collections.singletonList("§7点击返回主菜单"));
+        backItem.setItemMeta(backMeta);
+        inventory.setItem(49, backItem);
     }
     
     /**
      * 创建等级图标
      */
     private ItemStack createLevelIcon(Player player, String kitType, int level, List<PlayerKitData> playerData) {
-        // 检查玩家是否拥有此等级
-        boolean hasLevel = playerData.stream()
+        boolean hasActiveLevel = playerData.stream()
                 .anyMatch(data -> data.getKitType().equals(kitType) 
                                && data.getKitLevel() == level 
                                && !data.isExpired());
+        boolean hasPermanentLevel = playerData.stream()
+                .anyMatch(data -> data.getKitType().equals(kitType)
+                        && data.getKitLevel() == level
+                        && data.isPermanent()
+                        && !data.isExpired());
+        boolean hasTemporaryLevel = hasActiveLevel && !hasPermanentLevel;
+        int highestPermanentLevel = playerData.stream()
+                .filter(data -> data.getKitType().equals(kitType) && data.isPermanent() && !data.isExpired())
+                .mapToInt(PlayerKitData::getKitLevel)
+                .max()
+                .orElse(0);
+        boolean hasHigherPermanentLevel = highestPermanentLevel > level;
+        boolean missingPreviousPermanent = level > 1 && highestPermanentLevel < level - 1;
         
-        // 根据拥有状态选择材料
-        Material material = hasLevel ? Material.EMERALD_BLOCK : Material.REDSTONE_BLOCK;
+        Material material;
+        if (hasPermanentLevel) {
+            material = Material.EMERALD_BLOCK;
+        } else if (hasTemporaryLevel) {
+            material = Material.EMERALD;
+        } else if (hasHigherPermanentLevel) {
+            material = Material.BARRIER;
+        } else if (missingPreviousPermanent) {
+            material = Material.COAL_BLOCK;
+        } else {
+            material = Material.REDSTONE_BLOCK;
+        }
         ItemStack icon = new ItemStack(material);
         ItemMeta meta = icon.getItemMeta();
         
@@ -433,12 +489,15 @@ public class MenuManager {
         
         List<String> lore = new ArrayList<>();
         
-        if (hasLevel) {
+        if (hasPermanentLevel) {
             lore.add("§a✓ 已拥有此等级");
             
             // 查找对应数据
             PlayerKitData kitData = playerData.stream()
-                    .filter(data -> data.getKitType().equals(kitType) && data.getKitLevel() == level)
+                    .filter(data -> data.getKitType().equals(kitType)
+                            && data.getKitLevel() == level
+                            && data.isPermanent()
+                            && !data.isExpired())
                     .findFirst()
                     .orElse(null);
             
@@ -459,6 +518,43 @@ public class MenuManager {
             
             lore.add("");
             lore.add("§e点击 §7领取今日奖励");
+        } else if (hasTemporaryLevel) {
+            lore.add("§e⌛ 当前为限时/非永久礼包");
+
+            PlayerKitData tempData = playerData.stream()
+                    .filter(data -> data.getKitType().equals(kitType)
+                            && data.getKitLevel() == level
+                            && !data.isPermanent()
+                            && !data.isExpired())
+                    .findFirst()
+                    .orElse(null);
+
+            if (tempData != null) {
+                lore.add("§7类型: §e限时 §7(剩余 " + tempData.getRemainingDays() + " 天)");
+                lore.add(tempData.hasClaimedToday() ? "§7今日奖励: §c已领取" : "§7今日奖励: §a可领取");
+            }
+
+            if (level > 1 && highestPermanentLevel < level - 1) {
+                lore.add("§c该等级暂时不能作为升级前置");
+                lore.add("§7需要先永久拥有等级 " + (level - 1));
+            }
+
+            lore.add("");
+            lore.add("§e左键 §7领取今日奖励");
+            lore.add("§eShift+左键 §7购买当前等级永久版");
+            lore.add("§e右键 §7查看装备详情");
+        } else if (hasHigherPermanentLevel) {
+            lore.add("§e↗ 已永久拥有更高等级：Lv." + highestPermanentLevel);
+            lore.add("§7当前等级已被更高礼包覆盖");
+            lore.add("§7不能重复购买，也不能单独领取低等级奖励");
+            lore.add("");
+            lore.add("§e右键 §7查看装备详情");
+        } else if (missingPreviousPermanent) {
+            lore.add("§c✗ 尚未满足购买条件");
+            lore.add("§7需要先永久拥有等级 " + (level - 1));
+            lore.add("§7限时/月付礼包不能作为升级前置");
+            lore.add("");
+            lore.add("§e右键 §7查看装备详情");
         } else {
             lore.add("§c✗ 尚未拥有此等级");
             
@@ -560,6 +656,9 @@ public class MenuManager {
                 String galaxyEquipType = equipType;
                 if (equipType.equals("护腿")) galaxyEquipType = "裤";
                 return "新银河" + level + "_" + galaxyEquipType;
+
+            case "zxgy":
+                return null;
                 
             default:
                 return level + kitType + equipType;
@@ -572,58 +671,97 @@ public class MenuManager {
     private void loadKitLevelDetail(Inventory inventory, Player player, String kitType, int level) {
         // 显示详细的礼包内容
         kitManager.getPlayerKitDataAsync(player).thenAccept(playerData -> {
-            boolean hasLevel = playerData.stream()
-                    .anyMatch(data -> data.getKitType().equals(kitType) 
-                                   && data.getKitLevel() == level 
-                                   && !data.isExpired());
-            
-            // 中心显示礼包信息
-            ItemStack infoItem = new ItemStack(Material.ENCHANTED_BOOK);
-            ItemMeta infoMeta = infoItem.getItemMeta();
-            infoMeta.setDisplayName("§6§l" + configManager.getKitDisplayName(kitType) + " §f- §e等级 " + level);
-            
-            List<String> lore = new ArrayList<>();
-            lore.add("§8✧═══════════════✧");
-            lore.add("");
-            lore.add("§7状态：" + (hasLevel ? "§a已拥有 §f(｡◕‿◕｡)" : "§c未拥有 §f(´・ω・`)"));
-            lore.add("");
-            
-            // 显示包含的装备
-            lore.add("§7装备配置：");
-            String[] equipTypes = {"剑", "头盔", "胸甲", "护腿", "靴子"};
-            String[] displayEquipTypes = {"剑", "头盔", "胸甲", "护腿", "靴子"};
-            for (int i = 0; i < equipTypes.length; i++) {
-                String itemKey = generateItemKey(kitType, level, equipTypes[i]);
-                ItemStack configItem = plugin.getItemLoader().getItemFromConfig(itemKey);
-                lore.add("  §8" + displayEquipTypes[i] + "：" + (configItem != null ? "§a✓" : "§7×"));
-            }
-            
-            lore.add("");
+            Bukkit.getScheduler().runTask(plugin, () -> {
+                boolean hasActiveLevel = playerData.stream()
+                        .anyMatch(data -> data.getKitType().equals(kitType)
+                                && data.getKitLevel() == level
+                                && !data.isExpired());
+                boolean hasPermanentLevel = playerData.stream()
+                        .anyMatch(data -> data.getKitType().equals(kitType)
+                                && data.getKitLevel() == level
+                                && data.isPermanent()
+                                && !data.isExpired());
+                boolean hasTemporaryLevel = hasActiveLevel && !hasPermanentLevel;
+                int highestPermanentLevel = playerData.stream()
+                        .filter(data -> data.getKitType().equals(kitType) && data.isPermanent() && !data.isExpired())
+                        .mapToInt(PlayerKitData::getKitLevel)
+                        .max()
+                        .orElse(0);
+                boolean hasHigherPermanentLevel = highestPermanentLevel > level;
+                boolean missingPreviousPermanent = level > 1 && highestPermanentLevel < level - 1;
 
-            
-            if (!hasLevel) {
-                lore.add("§7价格信息：");
-                List<Integer> prices = configManager.getKitPermanentPrices(kitType);
-                if (level <= prices.size()) {
-                    int price = prices.get(level - 1);
-                    lore.add("  §a" + price + " 点券 §8(永久)");
-                    // 只有支持月付的礼包才显示硬币价格
-                    if (plugin.getKitManager().supportsMonthlyPurchase(kitType, level)) {
-                    lore.add("  §e" + (price * 100) + " 硬币 §8(月度订阅)");
+                // 中心显示礼包信息
+                ItemStack infoItem = new ItemStack(Material.ENCHANTED_BOOK);
+                ItemMeta infoMeta = infoItem.getItemMeta();
+                infoMeta.setDisplayName("§6§l" + configManager.getKitDisplayName(kitType) + " §f- §e等级 " + level);
+
+                List<String> lore = new ArrayList<>();
+                lore.add("§8✧═══════════════✧");
+                lore.add("");
+                if (hasPermanentLevel) {
+                    lore.add("§7状态：§a已永久拥有 §f(｡◕‿◕｡)");
+                } else if (hasTemporaryLevel) {
+                    lore.add("§7状态：§e当前为限时/非永久拥有 §f(｡◕‿◕｡)");
+                } else if (hasHigherPermanentLevel) {
+                    lore.add("§7状态：§e已永久拥有更高等级 Lv." + highestPermanentLevel + " §f(｡◕‿◕｡)");
+                } else if (missingPreviousPermanent) {
+                    lore.add("§7状态：§6需先补永久前置等级 §f(´・ω・`)");
+                } else {
+                    lore.add("§7状态：§c未拥有 §f(´・ω・`)");
+                }
+                lore.add("");
+
+                // 显示包含的装备
+                lore.add("§7装备配置：");
+                for (String equipmentLine : buildEquipmentSummary(kitType, level)) {
+                    lore.add(equipmentLine);
+                }
+
+                lore.add("");
+
+                if (hasHigherPermanentLevel) {
+                    lore.add("§7购买状态：");
+                    lore.add("  §e你已永久拥有更高等级礼包");
+                    lore.add("  §7当前等级无需重复购买");
+                } else if (hasTemporaryLevel) {
+                    lore.add("§7购买状态：");
+                    lore.add("  §e当前仅为限时/非永久拥有");
+                    lore.add("  §7如需作为升级前置，必须购买本级永久版");
+                } else if (missingPreviousPermanent) {
+                    lore.add("§7购买状态：");
+                    lore.add("  §c需要先永久拥有等级 " + (level - 1));
+                    lore.add("  §7限时/月付礼包不能作为升级前置");
+                } else if (!hasPermanentLevel) {
+                    lore.add("§7价格信息：");
+                    List<Integer> prices = configManager.getKitPermanentPrices(kitType);
+                    if (level <= prices.size()) {
+                        int basePrice = prices.get(level - 1);
+                        double discount = configManager.getKitLevelDiscount(kitType, level);
+                        int finalPrice = (int) Math.ceil(basePrice * discount);
+                        if (discount < 1.0D && discount > 0.0D) {
+                            lore.add("  §c原价 " + basePrice + " 点券");
+                            lore.add("  §e折后 " + finalPrice + " 点券 §8(永久)");
+                        } else {
+                            lore.add("  §a" + finalPrice + " 点券 §8(永久)");
+                        }
+                        // 只有支持月付的礼包才显示硬币价格
+                        if (plugin.getKitManager().supportsMonthlyPurchase(kitType, level)) {
+                            lore.add("  §e" + (finalPrice * 100) + " 硬币 §8(月度订阅)");
+                        }
                     }
                 }
-            }
-            
-            lore.add("");
-            lore.add("§8✧═══════════════✧");
-            
-            infoMeta.setLore(lore);
-            infoMeta.addItemFlags(ItemFlag.HIDE_ATTRIBUTES);
-            infoItem.setItemMeta(infoMeta);
-            inventory.setItem(22, infoItem);
-            
-            // 左侧显示预览物品（简化版）
-            displayKitPreview(inventory, kitType, level);
+
+                lore.add("");
+                lore.add("§8✧═══════════════✧");
+
+                infoMeta.setLore(lore);
+                infoMeta.addItemFlags(ItemFlag.HIDE_ATTRIBUTES);
+                infoItem.setItemMeta(infoMeta);
+                inventory.setItem(22, infoItem);
+
+                // 左侧显示预览物品（简化版）
+                displayKitPreview(inventory, kitType, level);
+            });
         });
         
         // 返回按钮
@@ -639,16 +777,13 @@ public class MenuManager {
      * 显示礼包预览物品
      */
     private void displayKitPreview(Inventory inventory, String kitType, int level) {
-        // 预览位置（左侧）
-        int[] previewSlots = {10, 19, 28, 37, 46}; // 剑、头盔、胸甲、护腿、靴子
+        int[] previewSlots = getPreviewSlots(kitType);
         String[] equipTypes = {"剑", "头盔", "胸甲", "护腿", "鞋子"};
-        
-        // 获取礼包奖励物品列表
-        List<ItemStack> rewardItems = plugin.getItemLoader().getKitRewardItems(kitType, level);
-        
-        if (!rewardItems.isEmpty() && rewardItems.size() >= 5) {
-            // 使用配置的物品作为预览
-            for (int i = 0; i < Math.min(5, rewardItems.size()); i++) {
+
+        List<ItemStack> rewardItems = getMenuPreviewItems(kitType, level);
+
+        if (!rewardItems.isEmpty()) {
+            for (int i = 0; i < Math.min(previewSlots.length, rewardItems.size()); i++) {
                 ItemStack rewardItem = rewardItems.get(i);
                 if (rewardItem != null) {
                     ItemStack previewItem = rewardItem.clone();
@@ -791,12 +926,10 @@ public class MenuManager {
      * 从配置文件加载物品
      */
     private void loadItemsFromConfig(Inventory inventory, Player player, String kitType, int level) {
-        // 装备展示位置（中心区域）
-        int[] equipSlots = {20, 11, 12, 21, 30}; // 剑、头盔、胸甲、护腿、靴子
+        int[] equipSlots = getItemDisplaySlots(kitType);
         String[] equipTypes = {"剑", "头盔", "胸甲", "护腿", "鞋子"};
-        
-        // 获取礼包奖励物品列表
-        List<ItemStack> rewardItems = plugin.getItemLoader().getKitRewardItems(kitType, level);
+
+        List<ItemStack> rewardItems = getMenuPreviewItems(kitType, level);
         
         if (!rewardItems.isEmpty()) {
             // 显示所有奖励物品 - 保持原始物品信息，不添加额外的礼包信息
@@ -830,26 +963,23 @@ public class MenuManager {
      */
     private ItemStack getItemFromConfig(String itemKey) {
         try {
-            // 优先使用EZItem API，否则使用ItemLoader
             if (plugin.getEZItemIntegration() != null && plugin.getEZItemIntegration().isEZItemEnabled()) {
-                ItemStack ezItem = plugin.getEZItemIntegration().getItemByTemplate(itemKey);
-                if (ezItem != null) {
-                    return ezItem;
-                }
+                return plugin.getEZItemIntegration().getItemByTemplate(itemKey);
             }
-            
-            // 如果EZItem获取失败，使用ItemLoader加载配置中定义的物品
-            return plugin.getItemLoader().getItemFromConfig(itemKey);
         } catch (Exception e) {
             plugin.getLogger().warning("无法加载物品: " + itemKey);
-            return null;
         }
+        return null;
     }
     
     /**
      * 创建默认显示物品
      */
     private ItemStack createDefaultDisplayItem(String kitType, int level, String equipType) {
+        if ("zxgy".equals(kitType) || "ywxc".equals(kitType)) {
+            return createBuiltInFallbackItem(kitType, equipType);
+        }
+
         Material material;
         
         // 根据装备类型选择材质
@@ -931,9 +1061,244 @@ public class MenuManager {
         return item;
     }
     
+    private List<String> buildEquipmentSummary(String kitType, int level) {
+        if ("zxgy".equals(kitType)) {
+            return Arrays.asList(
+                "  §8战斧：§a✓",
+                "  §8战弓：§a✓",
+                "  §8头盔：§a✓",
+                "  §8胸甲：§a✓",
+                "  §8护腿：§a✓",
+                "  §8靴子：§a✓"
+            );
+        }
+        if ("ywxc".equals(kitType)) {
+            return Arrays.asList(
+                "  §8观星剑：§a✓",
+                "  §8巡天弓：§a✓",
+                "  §8头盔：§a✓",
+                "  §8胸甲：§a✓",
+                "  §8护腿：§a✓",
+                "  §8靴子：§a✓"
+            );
+        }
+        if ("mining".equals(kitType)) {
+            return Arrays.asList(
+                "  §8专业矿稿：§a✓",
+                "  §8矿工营养胶囊：§a✓"
+            );
+        }
 
-    
+        List<String> summary = new ArrayList<>();
+        String[] equipTypes = {"剑", "头盔", "胸甲", "护腿", "靴子"};
+        String[] displayEquipTypes = {"剑", "头盔", "胸甲", "护腿", "靴子"};
+        for (int i = 0; i < equipTypes.length; i++) {
+            String itemKey = generateItemKey(kitType, level, equipTypes[i]);
+            ItemStack configItem = itemKey == null ? null : getItemFromConfig(itemKey);
+            summary.add("  §8" + displayEquipTypes[i] + "：" + (configItem != null ? "§a✓" : "§7×"));
+        }
+        return summary;
+    }
 
+    private int[] getPreviewSlots(String kitType) {
+        if ("zxgy".equals(kitType) || "ywxc".equals(kitType)) {
+            return new int[] {10, 11, 19, 28, 37, 46};
+        }
+        return new int[] {10, 19, 28, 37, 46};
+    }
+
+    private int[] getItemDisplaySlots(String kitType) {
+        if ("zxgy".equals(kitType) || "ywxc".equals(kitType)) {
+            return new int[] {20, 11, 12, 21, 29, 30};
+        }
+        return new int[] {20, 11, 12, 21, 30};
+    }
+
+    private List<ItemStack> getMenuPreviewItems(String kitType, int level) {
+        if ("zxgy".equals(kitType)) {
+            return createZxgyPreviewItems();
+        }
+        if ("ywxc".equals(kitType)) {
+            return createYwxcPreviewItems();
+        }
+
+        List<ItemStack> items = new ArrayList<>();
+        for (String itemKey : configManager.getKitRewardItems(kitType, level)) {
+            if (itemKey == null || itemKey.trim().isEmpty()) {
+                continue;
+            }
+
+            ItemStack item = getItemFromConfig(itemKey);
+            if (item != null) {
+                items.add(item);
+            }
+        }
+        return items;
+    }
+
+    private ItemStack createBuiltInFallbackItem(String kitType, String equipType) {
+        if ("zxgy".equals(kitType)) {
+            return createZxgyFallbackItem(equipType);
+        }
+        return createYwxcFallbackItem(equipType);
+    }
+
+    private List<ItemStack> createZxgyPreviewItems() {
+        List<ItemStack> items = new ArrayList<>();
+        items.add(createPreviewItem(
+            Material.DIAMOND_AXE,
+            "§5沾星战斧",
+            Arrays.asList(
+                "§7星辰的惩罚",
+                "§7造成伤害时固定削减目标 §c1点生命上限",
+                "§7目标死亡后生命上限恢复"
+            ),
+            Enchantment.DAMAGE_ALL,
+            5
+        ));
+        items.add(createPreviewItem(
+            Material.BOW,
+            "§d顾月长弓",
+            Arrays.asList(
+                "§7星月系远程武器",
+                "§7命中时触发专属箭矢特效"
+            ),
+            Enchantment.ARROW_DAMAGE,
+            4
+        ));
+        items.add(createPreviewArmor(Material.DIAMOND_HELMET, "§d顾月兜鍪", "§7星月护具部件"));
+        items.add(createPreviewArmor(
+            Material.DIAMOND_CHESTPLATE,
+            "§5沾星胸甲",
+            "§7保护 IV",
+            "§7额外受到伤害减少 §a1% - 3%"
+        ));
+        items.add(createPreviewArmor(Material.DIAMOND_LEGGINGS, "§d顾月护腿", "§7星月护具部件"));
+        items.add(createPreviewArmor(Material.DIAMOND_BOOTS, "§d顾月战靴", "§7星月护具部件"));
+        return items;
+    }
+
+    private ItemStack createZxgyFallbackItem(String equipType) {
+        if ("剑".equals(equipType)) {
+            return createPreviewItem(
+                Material.DIAMOND_AXE,
+                "§5沾星战斧",
+                Arrays.asList(
+                    "§7星辰的惩罚",
+                    "§7造成伤害时固定削减目标 §c1点生命上限"
+                ),
+                Enchantment.DAMAGE_ALL,
+                5
+            );
+        }
+        if ("头盔".equals(equipType)) {
+            return createPreviewArmor(Material.DIAMOND_HELMET, "§d顾月兜鍪", "§7星月护具部件");
+        }
+        if ("胸甲".equals(equipType)) {
+            return createPreviewArmor(
+                Material.DIAMOND_CHESTPLATE,
+                "§5沾星胸甲",
+                "§7保护 IV",
+                "§7额外受到伤害减少 §a1% - 3%"
+            );
+        }
+        if ("护腿".equals(equipType)) {
+            return createPreviewArmor(Material.DIAMOND_LEGGINGS, "§d顾月护腿", "§7星月护具部件");
+        }
+        return createPreviewArmor(Material.DIAMOND_BOOTS, "§d顾月战靴", "§7星月护具部件");
+    }
+
+    private List<ItemStack> createYwxcPreviewItems() {
+        List<ItemStack> items = new ArrayList<>();
+        items.add(createPreviewItem(
+            Material.DIAMOND_SWORD,
+            "§b观星剑",
+            Arrays.asList(
+                "§7三次有效伤害后触发一次压制",
+                "§7若目标拥有生命恢复，则强制缩短 §c1秒",
+                "§75秒冷却"
+            ),
+            Enchantment.DAMAGE_ALL,
+            6
+        ));
+        items.add(createPreviewItem(
+            Material.BOW,
+            "§b巡天弓",
+            Arrays.asList(
+                "§7远程连续命中可压制目标恢复",
+                "§73次命中触发，5秒冷却"
+            ),
+            Enchantment.ARROW_DAMAGE,
+            6
+        ));
+        items.add(createPreviewArmor(
+            Material.DIAMOND_HELMET,
+            "§b星穹盔",
+            "§7保护 VI",
+            "§7受到伤害固定减少 §a5%"
+        ));
+        items.add(createPreviewArmor(
+            Material.DIAMOND_CHESTPLATE,
+            "§b星穹甲",
+            "§7保护 VI",
+            "§7若攻击者有力量 III+，其伤害再降低 §a30%"
+        ));
+        items.add(createPreviewArmor(Material.DIAMOND_LEGGINGS, "§b星穹腿", "§7高防星辉护腿"));
+        items.add(createPreviewArmor(Material.DIAMOND_BOOTS, "§b星穹靴", "§7高防星辉战靴"));
+        return items;
+    }
+
+    private ItemStack createYwxcFallbackItem(String equipType) {
+        if ("剑".equals(equipType)) {
+            return createPreviewItem(
+                Material.DIAMOND_SWORD,
+                "§b观星剑",
+                Arrays.asList(
+                    "§7三次有效伤害后压制目标的生命恢复",
+                    "§75秒冷却"
+                ),
+                Enchantment.DAMAGE_ALL,
+                6
+            );
+        }
+        if ("头盔".equals(equipType)) {
+            return createPreviewArmor(Material.DIAMOND_HELMET, "§b星穹盔", "§7保护 VI", "§7固定减伤 5%");
+        }
+        if ("胸甲".equals(equipType)) {
+            return createPreviewArmor(
+                Material.DIAMOND_CHESTPLATE,
+                "§b星穹甲",
+                "§7保护 VI",
+                "§7对力量 III+ 攻击者额外压伤害"
+            );
+        }
+        if ("护腿".equals(equipType)) {
+            return createPreviewArmor(Material.DIAMOND_LEGGINGS, "§b星穹腿", "§7高防星辉护腿");
+        }
+        return createPreviewArmor(Material.DIAMOND_BOOTS, "§b星穹靴", "§7高防星辉战靴");
+    }
+
+    private ItemStack createPreviewArmor(Material material, String displayName, String... loreLines) {
+        return createPreviewItem(
+            material,
+            displayName,
+            Arrays.asList(loreLines),
+            Enchantment.PROTECTION_ENVIRONMENTAL,
+            4
+        );
+    }
+
+    private ItemStack createPreviewItem(Material material, String displayName, List<String> loreLines,
+                                        Enchantment enchantment, int enchantLevel) {
+        ItemStack item = new ItemStack(material);
+        ItemMeta meta = item.getItemMeta();
+        meta.setDisplayName(displayName);
+        meta.setLore(new ArrayList<>(loreLines));
+        meta.addItemFlags(ItemFlag.HIDE_ATTRIBUTES, ItemFlag.HIDE_ENCHANTS);
+        item.setItemMeta(meta);
+        item.addUnsafeEnchantment(enchantment, enchantLevel);
+        return item;
+    }
 
     public enum MenuType {
         MAIN_MENU,

@@ -3,6 +3,8 @@ package com.remiaft.skypvpkits.managers;
 import com.remiaft.skypvpkits.SkyPVPKits;
 import org.bukkit.configuration.file.FileConfiguration;
 
+import java.util.Arrays;
+import java.util.Collections;
 import java.util.List;
 
 /**
@@ -11,6 +13,23 @@ import java.util.List;
  * @author AngelHell
  */
 public class ConfigManager {
+
+    private static final String ZXGY_KIT_TYPE = "zxgy";
+    private static final String ZXGY_DISPLAY_NAME = "§5沾星顾月";
+    private static final List<String> ZXGY_DESCRIPTION = Arrays.asList(
+            "§7星月主题弓斧套装",
+            "§7永久礼包，附带专属战斗效果"
+    );
+    private static final List<Integer> ZXGY_PERMANENT_PRICES = Collections.singletonList(88800);
+    private static final List<Double> ZXGY_LEVEL_DISCOUNTS = Collections.singletonList(1.0D);
+    private static final String YWXC_KIT_TYPE = "ywxc";
+    private static final String YWXC_DISPLAY_NAME = "§b仰望星辰";
+    private static final List<String> YWXC_DESCRIPTION = Arrays.asList(
+            "§7高防星辉主题套装",
+            "§7永久礼包，主打压制生命恢复与强力减伤"
+    );
+    private static final List<Integer> YWXC_PERMANENT_PRICES = Collections.singletonList(181250);
+    private static final List<Double> YWXC_LEVEL_DISCOUNTS = Collections.singletonList(0.8D);
     
     private final SkyPVPKits plugin;
     private FileConfiguration config;
@@ -111,30 +130,66 @@ public class ConfigManager {
      * 获取礼包配置
      */
     public boolean isKitEnabled(String kitType) {
+        if (isBuiltInKit(kitType)) {
+            return true;
+        }
         return config.getBoolean("kits." + kitType + ".enabled", true);
     }
     
     public String getKitDisplayName(String kitType) {
+        if (ZXGY_KIT_TYPE.equalsIgnoreCase(kitType)) {
+            return ZXGY_DISPLAY_NAME;
+        }
+        if (YWXC_KIT_TYPE.equalsIgnoreCase(kitType)) {
+            return YWXC_DISPLAY_NAME;
+        }
         return config.getString("kits." + kitType + ".display_name", "§f未知礼包");
     }
     
     public List<String> getKitDescription(String kitType) {
+        if (ZXGY_KIT_TYPE.equalsIgnoreCase(kitType)) {
+            return ZXGY_DESCRIPTION;
+        }
+        if (YWXC_KIT_TYPE.equalsIgnoreCase(kitType)) {
+            return YWXC_DESCRIPTION;
+        }
         return config.getStringList("kits." + kitType + ".description");
     }
     
     public String getKitIcon(String kitType) {
+        if (ZXGY_KIT_TYPE.equalsIgnoreCase(kitType)) {
+            return "BOW";
+        }
+        if (YWXC_KIT_TYPE.equalsIgnoreCase(kitType)) {
+            return "DIAMOND_CHESTPLATE";
+        }
         return config.getString("kits." + kitType + ".icon", "CHEST");
     }
     
     public int getKitLevels(String kitType) {
+        if (isBuiltInKit(kitType)) {
+            return 1;
+        }
         return config.getInt("kits." + kitType + ".levels", 1);
     }
     
     public List<Integer> getKitPermanentPrices(String kitType) {
+        if (ZXGY_KIT_TYPE.equalsIgnoreCase(kitType)) {
+            return ZXGY_PERMANENT_PRICES;
+        }
+        if (YWXC_KIT_TYPE.equalsIgnoreCase(kitType)) {
+            return YWXC_PERMANENT_PRICES;
+        }
         return config.getIntegerList("kits." + kitType + ".permanent_prices");
     }
     
     public double getKitLevelDiscount(String kitType, int level) {
+        if (ZXGY_KIT_TYPE.equalsIgnoreCase(kitType)) {
+            return 1.0D;
+        }
+        if (YWXC_KIT_TYPE.equalsIgnoreCase(kitType)) {
+            return 0.8D;
+        }
         List<Double> discounts = config.getDoubleList("kits." + kitType + ".level_discounts");
         if (level <= 0 || level > discounts.size()) {
             return 1.0; // 默认不打折
@@ -143,15 +198,38 @@ public class ConfigManager {
     }
     
     public List<Double> getKitLevelDiscounts(String kitType) {
+        if (ZXGY_KIT_TYPE.equalsIgnoreCase(kitType)) {
+            return ZXGY_LEVEL_DISCOUNTS;
+        }
+        if (YWXC_KIT_TYPE.equalsIgnoreCase(kitType)) {
+            return YWXC_LEVEL_DISCOUNTS;
+        }
         return config.getDoubleList("kits." + kitType + ".level_discounts");
     }
     
     public boolean isKitSupportPoints(String kitType) {
+        if (isBuiltInKit(kitType)) {
+            return true;
+        }
         return config.getBoolean("kits." + kitType + ".support_points", true);
     }
     
     public boolean isKitSupportMonthly(String kitType) {
+        if (isBuiltInKit(kitType)) {
+            return false;
+        }
         return config.getBoolean("kits." + kitType + ".support_monthly", true);
+    }
+
+    public List<String> getKitRewardItems(String kitType, int level) {
+        if (isBuiltInKit(kitType)) {
+            return Collections.emptyList();
+        }
+        return config.getStringList("kit_rewards." + kitType + "." + level + ".items");
+    }
+
+    private boolean isBuiltInKit(String kitType) {
+        return ZXGY_KIT_TYPE.equalsIgnoreCase(kitType) || YWXC_KIT_TYPE.equalsIgnoreCase(kitType);
     }
     
     /**

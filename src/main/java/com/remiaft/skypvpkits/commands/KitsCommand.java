@@ -84,6 +84,18 @@ public class KitsCommand implements CommandExecutor, TabCompleter {
             case "删除":
                 handleRemoveCommand(sender, args);
                 break;
+
+            case "reclaim":
+            case "revoke":
+            case "回收":
+                handleReclaimCommand(sender, args);
+                break;
+
+            case "cleanup":
+            case "cleanlegacy":
+            case "清理旧物":
+                handleCleanupLegacyCommand(sender, args);
+                break;
                 
             default:
                 sender.sendMessage(plugin.getConfigManager().getMessage("unknown_command"));
@@ -116,6 +128,8 @@ public class KitsCommand implements CommandExecutor, TabCompleter {
             if (sender.hasPermission("skypvpkits.admin")) {
                 sender.sendMessage("§7/skypvpkits give <玩家> <礼包> <等级> [永久|月付] §8- 给予礼包");
                 sender.sendMessage("§7/skypvpkits remove <玩家> <礼包> <等级> §8- 删除礼包");
+                sender.sendMessage("§7/skypvpkits reclaim <礼包> <等级> §8- 批量回收礼包");
+                sender.sendMessage("§7/skypvpkits cleanup <玩家> <礼包> <等级> §8- 清理旧版手动发放装备");
             }
         }
         
@@ -133,7 +147,7 @@ public class KitsCommand implements CommandExecutor, TabCompleter {
         }
         
         try {
-                                plugin.reloadConfig();
+            plugin.reloadPluginData();
             sender.sendMessage(plugin.getConfigManager().getMessage("reload_success"));
         } catch (Exception e) {
             sender.sendMessage(plugin.getConfigManager().getMessage("reload_failed"));
@@ -415,7 +429,6 @@ public class KitsCommand implements CommandExecutor, TabCompleter {
             .exceptionally(throwable -> {
                 sender.sendMessage("§c✖ 处理出错了：" + throwable.getMessage() + " §f(´･_･`)");
                 plugin.getLogger().severe("管理员给予礼包时发生错误: " + throwable.getMessage());
-                throwable.printStackTrace();
                 return null;
             });
     }
@@ -495,9 +508,119 @@ public class KitsCommand implements CommandExecutor, TabCompleter {
                 .exceptionally(throwable -> {
                     sender.sendMessage("§c删除过程中发生错误: " + throwable.getMessage());
                     plugin.getLogger().severe("管理员删除礼包时发生错误: " + throwable.getMessage());
-                    throwable.printStackTrace();
                     return null;
                 });
+    }
+
+    private void handleReclaimCommand(CommandSender sender, String[] args) {
+        if (!sender.hasPermission("skypvpkits.admin")) {
+            sender.sendMessage(plugin.getConfigManager().getMessage("no_permission"));
+            return;
+        }
+
+        if (args.length < 3) {
+            sender.sendMessage("§c用法: /skypvpkits reclaim <礼包> <等级>");
+            sender.sendMessage("§c示例: /skypvpkits reclaim 沾星顾月 1");
+            return;
+        }
+
+        String kitType = parseKitType(args[1]);
+        if (kitType == null) {
+            sender.sendMessage(plugin.getConfigManager().getMessage("kit_not_found"));
+            return;
+        }
+
+        int level;
+        try {
+            level = Integer.parseInt(args[2]);
+        } catch (NumberFormatException e) {
+            sender.sendMessage("§c等级必须是数字！");
+            return;
+        }
+
+        int maxLevels = plugin.getConfigManager().getKitLevels(kitType);
+        if (level <= 0 || level > maxLevels) {
+            sender.sendMessage(plugin.getConfigManager().getMessage("level_not_found"));
+            return;
+        }
+
+        String kitName = plugin.getConfigManager().getKitDisplayName(kitType);
+        plugin.getKitManager().removeAllKitLevels(kitType, level)
+                .thenAccept(result -> {
+                    if (result.isSuccess()) {
+                        sender.sendMessage("§a成功回收 " + result.getAffectedPlayers() + " 名玩家的 " +
+                            kitName + " Lv" + level + "，共删除 " + result.getDeletedRecords() + " 条记录！");
+
+                        for (java.util.UUID playerUUID : result.getPlayerUUIDs()) {
+                            Player onlinePlayer = Bukkit.getPlayer(playerUUID);
+                            if (onlinePlayer != null) {
+                                onlinePlayer.sendMessage("§c§l[系统] §f管理员回收了你的 " + kitName + " Lv" + level);
+                            }
+                        }
+
+                        plugin.getLogger().info("[管理员操作] " + sender.getName() +
+                            " 批量回收了 " + kitName + " Lv" + level +
+                            "，影响玩家数: " + result.getAffectedPlayers() +
+                            "，删除记录数: " + result.getDeletedRecords());
+                    } else {
+                        sender.sendMessage("§c回收失败: " + result.getMessage());
+                    }
+                })
+                .exceptionally(throwable -> {
+                    sender.sendMessage("§c回收过程中发生错误: " + throwable.getMessage());
+                    plugin.getLogger().severe("管理员批量回收礼包时发生错误: " + throwable.getMessage());
+                    return null;
+                });
+    }
+
+    private void handleCleanupLegacyCommand(CommandSender sender, String[] args) {
+        if (!sender.hasPermission("skypvpkits.admin")) {
+            sender.sendMessage(plugin.getConfigManager().getMessage("no_permission"));
+            return;
+        }
+
+        if (args.length < 4) {
+            sender.sendMessage("§c用法: /skypvpkits cleanup <玩家> <礼包> <等级>");
+            sender.sendMessage("§c示例: /skypvpkits cleanup AngelHell 天空 1");
+            return;
+        }
+
+        Player targetPlayer = Bukkit.getPlayer(args[1]);
+        if (targetPlayer == null) {
+            sender.sendMessage("§c目标玩家必须在线，才能清理背包中的旧物品");
+            return;
+        }
+
+        String kitType = parseKitType(args[2]);
+        if (kitType == null) {
+            sender.sendMessage(plugin.getConfigManager().getMessage("kit_not_found"));
+            return;
+        }
+
+        int level;
+        try {
+            level = Integer.parseInt(args[3]);
+        } catch (NumberFormatException e) {
+            sender.sendMessage("§c等级必须是数字！");
+            return;
+        }
+
+        int maxLevels = plugin.getConfigManager().getKitLevels(kitType);
+        if (level <= 0 || level > maxLevels) {
+            sender.sendMessage(plugin.getConfigManager().getMessage("level_not_found"));
+            return;
+        }
+
+        int removed = plugin.getKitManager().cleanupLegacyIssuedItems(targetPlayer, kitType, level);
+        String kitName = plugin.getConfigManager().getKitDisplayName(kitType);
+
+        sender.sendMessage("§a已清理 " + targetPlayer.getName() + " 的旧版 " + kitName + " Lv" + level + " 物品，共 " + removed + " 件");
+        if (!sender.getName().equalsIgnoreCase(targetPlayer.getName())) {
+            targetPlayer.sendMessage("§e管理员清理了你背包中的旧版 " + kitName + " Lv" + level + " 物品，共 " + removed + " 件");
+        }
+
+        plugin.getLogger().info("[管理员操作] " + sender.getName() + " 清理了 " + targetPlayer.getName()
+                + " 的旧版 " + kitName + " Lv" + level + " 物品，共 " + removed + " 件");
     }
     
     /**
@@ -529,6 +652,14 @@ public class KitsCommand implements CommandExecutor, TabCompleter {
             case "银河":
             case "galaxy":
                 return "galaxy";
+            case "沾星顾月":
+            case "沾星":
+            case "zxgy":
+                return "zxgy";
+            case "仰望星辰":
+            case "星辰":
+            case "ywxc":
+                return "ywxc";
             default:
                 return null;
         }
@@ -539,8 +670,19 @@ public class KitsCommand implements CommandExecutor, TabCompleter {
      */
     private void handlePurchaseError(Player player, KitManager.PurchaseResult result) {
         switch (result.getErrorCode()) {
+            case "already_owned":
+            case "higher_level_owned":
+                player.sendMessage(plugin.getConfigManager().getMessage("already_owned"));
+                break;
+            case "need_previous_permanent_level":
+                player.sendMessage("§c需要先永久拥有等级 " + result.getAmount() + " 才能购买更高等级礼包");
+                break;
+            case "need_previous_level":
             case "cannot_purchase":
-                player.sendMessage(plugin.getConfigManager().getMessage("need_previous_level"));
+                player.sendMessage(plugin.getConfigManager().getMessage(
+                        "need_previous_level",
+                        "level", String.valueOf(result.getAmount())
+                ));
                 break;
             case "insufficient_points":
                 String pointsMsg = plugin.getConfigManager().getMessage("insufficient_points")
@@ -611,7 +753,7 @@ public class KitsCommand implements CommandExecutor, TabCompleter {
                 completions.addAll(Arrays.asList("reload", "重载"));
             }
             if (sender.hasPermission("skypvpkits.admin")) {
-                completions.addAll(Arrays.asList("give", "给予", "remove", "delete", "删除"));
+                completions.addAll(Arrays.asList("give", "给予", "remove", "delete", "删除", "reclaim", "revoke", "回收", "cleanup", "cleanlegacy", "清理旧物"));
             }
             
         } else if (args.length == 2) {
@@ -621,7 +763,7 @@ public class KitsCommand implements CommandExecutor, TabCompleter {
                  subCommand.equals("claim") || subCommand.equals("领取")) 
                  && sender.hasPermission("skypvpkits.use")) {
                 // 礼包类型
-                completions.addAll(Arrays.asList("天空", "火星", "地球", "月球", "太阳", "挖矿", "银河"));
+                completions.addAll(Arrays.asList("天空", "火星", "地球", "月球", "太阳", "挖矿", "银河", "沾星顾月", "仰望星辰"));
             } else if ((subCommand.equals("info") || subCommand.equals("信息")) 
                        && sender.hasPermission("skypvpkits.admin")) {
                 // 管理员查看其他玩家信息
@@ -634,6 +776,12 @@ public class KitsCommand implements CommandExecutor, TabCompleter {
                        && sender.hasPermission("skypvpkits.admin")) {
                 // 管理员删除礼包 - 玩家名称
                 Bukkit.getOnlinePlayers().forEach(player -> completions.add(player.getName()));
+            } else if ((subCommand.equals("cleanup") || subCommand.equals("cleanlegacy") || subCommand.equals("清理旧物"))
+                       && sender.hasPermission("skypvpkits.admin")) {
+                Bukkit.getOnlinePlayers().forEach(player -> completions.add(player.getName()));
+            } else if ((subCommand.equals("reclaim") || subCommand.equals("revoke") || subCommand.equals("回收"))
+                       && sender.hasPermission("skypvpkits.admin")) {
+                completions.addAll(Arrays.asList("天空", "火星", "地球", "月球", "太阳", "挖矿", "银河", "沾星顾月", "仰望星辰"));
             }
             
         } else if (args.length == 3) {
@@ -645,18 +793,7 @@ public class KitsCommand implements CommandExecutor, TabCompleter {
                 String kitType = parseKitType(args[1]);
                 int maxLevel = 5; // 默认最大等级
                 if (kitType != null) {
-                    switch (kitType) {
-                        case "galaxy":
-                            maxLevel = 4; // 银河礼包只有4个等级
-                            break;
-                        case "sky":
-                        case "sun":
-                            maxLevel = 5; // 天空和太阳礼包有5个等级
-                            break;
-                        default:
-                            maxLevel = 4; // 其他礼包有4个等级
-                            break;
-                    }
+                    maxLevel = plugin.getConfigManager().getKitLevels(kitType);
                 }
                 for (int i = 1; i <= maxLevel; i++) {
                     completions.add(String.valueOf(i));
@@ -664,11 +801,24 @@ public class KitsCommand implements CommandExecutor, TabCompleter {
             } else if ((subCommand.equals("give") || subCommand.equals("给予")) 
                        && sender.hasPermission("skypvpkits.admin")) {
                 // 管理员给予礼包 - 礼包类型
-                completions.addAll(Arrays.asList("天空", "火星", "地球", "月球", "太阳", "挖矿", "银河"));
+                completions.addAll(Arrays.asList("天空", "火星", "地球", "月球", "太阳", "挖矿", "银河", "沾星顾月", "仰望星辰"));
             } else if ((subCommand.equals("remove") || subCommand.equals("delete") || subCommand.equals("删除")) 
                        && sender.hasPermission("skypvpkits.admin")) {
                 // 管理员删除礼包 - 礼包类型
-                completions.addAll(Arrays.asList("天空", "火星", "地球", "月球", "太阳", "挖矿", "银河"));
+                completions.addAll(Arrays.asList("天空", "火星", "地球", "月球", "太阳", "挖矿", "银河", "沾星顾月", "仰望星辰"));
+            } else if ((subCommand.equals("cleanup") || subCommand.equals("cleanlegacy") || subCommand.equals("清理旧物"))
+                       && sender.hasPermission("skypvpkits.admin")) {
+                completions.addAll(Arrays.asList("天空", "火星", "地球", "月球", "太阳", "挖矿", "银河", "沾星顾月", "仰望星辰"));
+            } else if ((subCommand.equals("reclaim") || subCommand.equals("revoke") || subCommand.equals("回收"))
+                       && sender.hasPermission("skypvpkits.admin")) {
+                String kitType = parseKitType(args[1]);
+                int maxLevel = 5;
+                if (kitType != null) {
+                    maxLevel = plugin.getConfigManager().getKitLevels(kitType);
+                }
+                for (int i = 1; i <= maxLevel; i++) {
+                    completions.add(String.valueOf(i));
+                }
             }
             
         } else if (args.length == 4) {
@@ -676,25 +826,18 @@ public class KitsCommand implements CommandExecutor, TabCompleter {
             if ((subCommand.equals("buy") || subCommand.equals("购买")) 
                 && sender.hasPermission("skypvpkits.use")) {
                 // 购买类型
-                completions.addAll(Arrays.asList("永久", "月付"));
+                String kitType = parseKitType(args[1]);
+                completions.add("永久");
+                if (kitType == null || plugin.getKitManager().supportsMonthlyPurchase(kitType, 1)) {
+                    completions.add("月付");
+                }
             } else if ((subCommand.equals("give") || subCommand.equals("给予")) 
                        && sender.hasPermission("skypvpkits.admin")) {
                 // 管理员给予礼包 - 等级
                 String kitType = parseKitType(args[2]);
                 int maxLevel = 5; // 默认最大等级
                 if (kitType != null) {
-                    switch (kitType) {
-                        case "galaxy":
-                            maxLevel = 4; // 银河礼包只有4个等级
-                            break;
-                        case "sky":
-                        case "sun":
-                            maxLevel = 5; // 天空和太阳礼包有5个等级
-                            break;
-                        default:
-                            maxLevel = 4; // 其他礼包有4个等级
-                            break;
-                    }
+                    maxLevel = plugin.getConfigManager().getKitLevels(kitType);
                 }
                 for (int i = 1; i <= maxLevel; i++) {
                     completions.add(String.valueOf(i));
@@ -705,18 +848,17 @@ public class KitsCommand implements CommandExecutor, TabCompleter {
                 String kitType = parseKitType(args[2]);
                 int maxLevel = 5; // 默认最大等级
                 if (kitType != null) {
-                    switch (kitType) {
-                        case "galaxy":
-                            maxLevel = 4; // 银河礼包只有4个等级
-                            break;
-                        case "sky":
-                        case "sun":
-                            maxLevel = 5; // 天空和太阳礼包有5个等级
-                            break;
-                        default:
-                            maxLevel = 4; // 其他礼包有4个等级
-                            break;
-                    }
+                    maxLevel = plugin.getConfigManager().getKitLevels(kitType);
+                }
+                for (int i = 1; i <= maxLevel; i++) {
+                    completions.add(String.valueOf(i));
+                }
+            } else if ((subCommand.equals("cleanup") || subCommand.equals("cleanlegacy") || subCommand.equals("清理旧物"))
+                       && sender.hasPermission("skypvpkits.admin")) {
+                String kitType = parseKitType(args[2]);
+                int maxLevel = 5;
+                if (kitType != null) {
+                    maxLevel = plugin.getConfigManager().getKitLevels(kitType);
                 }
                 for (int i = 1; i <= maxLevel; i++) {
                     completions.add(String.valueOf(i));
@@ -728,7 +870,11 @@ public class KitsCommand implements CommandExecutor, TabCompleter {
             if ((subCommand.equals("give") || subCommand.equals("给予")) 
                 && sender.hasPermission("skypvpkits.admin")) {
                 // 管理员给予礼包 - 类型
-                completions.addAll(Arrays.asList("永久", "月付"));
+                String kitType = parseKitType(args[2]);
+                completions.add("永久");
+                if (kitType == null || plugin.getKitManager().supportsMonthlyPurchase(kitType, 1)) {
+                    completions.add("月付");
+                }
             }
         }
         

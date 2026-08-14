@@ -1,31 +1,23 @@
 name: SkyPVPKits
 version: '1.0.0'
 main: com.remiaft.skypvpkits.SkyPVPKits
-api-version: 1.13
 authors: [ AngelHell ]
 description: A PVP Kit plugin for SkyPVP server
 depend: [PlaceholderAPI, Vault]
+softdepend: [EZItem, SkyPVPItem]
 
 commands:
   kits:
     description: Open the kits menu
     usage: /<command>
     aliases: [kit]
-  initializeitems:
-    description: Initialize items from items.yml to config.yml
-    usage: /<command>
-    permission: skypvpkits.admin
   skypvpkits:
     description: Main command for SkyPVPKits
-    aliases: [spk, kits]
-    usage: /skypvpkits [help|menu|buy|claim|info]
+    aliases: [spk]
+    usage: /skypvpkits [help|menu|buy|claim|info|give|remove|reclaim|cleanup]
   openkits:
     description: Open kits menu for a player
     usage: /openkits <player> <kittype>
-  testezitem:
-    description: Test EZItem API integration
-    usage: /testezitem [status|get|list|test]
-    permission: skypvpkits.admin
 
 permissions:
   skypvpkits.admin:

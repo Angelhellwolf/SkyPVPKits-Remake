@@ -2,10 +2,14 @@ package com.remiaft.skypvpkits.utils;
 
 import com.remiaft.ezitem.api.EZItemAPI;
 import com.remiaft.skypvpkits.SkyPVPKits;
+import org.bukkit.entity.Player;
 import org.bukkit.inventory.ItemStack;
 
 import java.util.Arrays;
 import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.logging.Logger;
 
 /**
@@ -20,6 +24,8 @@ public class EZItemIntegration {
     private final SkyPVPKits plugin;
     private EZItemAPI ezItemAPI;
     private boolean ezItemEnabled = false;
+    private final Map<String, ItemStack> templateCache = new ConcurrentHashMap<>();
+    private final Set<String> missingTemplates = ConcurrentHashMap.newKeySet();
     
     // 模板名称列表 - 来自ItemConfigGenerator
     private static final List<String> TEMPLATE_NAMES = Arrays.asList(
@@ -45,14 +51,14 @@ public class EZItemIntegration {
         "3太阳sun剑", "3太阳sun头盔", "3太阳sun胸甲", "3太阳sun护腿", "3太阳sun鞋子",
         "4太阳sun剑", "4太阳sun头盔", "4太阳sun胸甲", "4太阳sun护腿", "4太阳sun鞋子",
         "5太阳sun剑", "5太阳sun头盔", "5太阳sun胸甲", "5太阳sun护腿", "5太阳sun鞋子",
-        "1挖矿mining镐", "1挖矿mining头盔", "1挖矿mining胸甲", "1挖矿mining护腿", "1挖矿mining鞋子",
-        "2挖矿mining镐", "2挖矿mining头盔", "2挖矿mining胸甲", "2挖矿mining护腿", "2挖矿mining鞋子",
-        "3挖矿mining镐", "3挖矿mining头盔", "3挖矿mining胸甲", "3挖矿mining护腿", "3挖矿mining鞋子",
-        "4挖矿mining镐", "4挖矿mining头盔", "4挖矿mining胸甲", "4挖矿mining护腿", "4挖矿mining鞋子",
-            "新银河1_剑", "新银河1_头盔", "新银河1_胸甲", "新银河1_裤", "新银河1_鞋",
-            "新银河2_剑", "新银河2_头盔", "新银河2_胸甲", "新银河2_裤", "新银河2_鞋",
-            "新银河3_剑", "新银河3_头盔", "新银河3_胸甲", "新银河3_裤", "新银河3_鞋",
-            "新银河4_剑", "新银河4_头盔", "新银河4_胸甲", "新银河4_裤", "新银河4_鞋"
+        "1挖矿mining稿", "1挖矿mining金苹果",
+        "2挖矿mining稿", "2挖矿mining金苹果",
+        "3挖矿mining稿", "3挖矿mining金苹果",
+        "4挖矿mining稿", "4挖矿mining金苹果",
+        "新银河1_剑", "新银河1_头盔", "新银河1_胸甲", "新银河1_裤", "新银河1_鞋",
+        "新银河2_剑", "新银河2_头盔", "新银河2_胸甲", "新银河2_裤", "新银河2_鞋",
+        "新银河3_剑", "新银河3_头盔", "新银河3_胸甲", "新银河3_裤", "新银河3_鞋",
+        "新银河4_剑", "新银河4_头盔", "新银河4_胸甲", "新银河4_裤", "新银河4_鞋"
     );
     
     public EZItemIntegration(SkyPVPKits plugin) {
@@ -64,6 +70,8 @@ public class EZItemIntegration {
      * 初始化EZItem API
      */
     private void initializeEZItemAPI() {
+        templateCache.clear();
+        missingTemplates.clear();
         try {
             if (plugin.getServer().getPluginManager().getPlugin("EZItem") != null) {
                 this.ezItemAPI = EZItemAPI.getInstance();
@@ -94,20 +102,69 @@ public class EZItemIntegration {
         if (!isEZItemEnabled()) {
             return null;
         }
+        if (templateName == null) {
+            return null;
+        }
+
+        String normalizedTemplateName = templateName.trim();
+        if (normalizedTemplateName.isEmpty() || missingTemplates.contains(normalizedTemplateName)) {
+            return null;
+        }
+
+        ItemStack cachedItem = templateCache.get(normalizedTemplateName);
+        if (cachedItem != null) {
+            return cachedItem.clone();
+        }
         
         try {
-            ItemStack item = ezItemAPI.getTemplateItem(templateName);
+            ItemStack item = ezItemAPI.getTemplateItem(normalizedTemplateName);
             if (item != null) {
-                LOGGER.fine("从EZItem获取物品: " + templateName);
+                templateCache.put(normalizedTemplateName, item.clone());
+                LOGGER.fine("从EZItem获取物品: " + normalizedTemplateName);
                 return item.clone();
             } else {
-                LOGGER.warning("EZItem模板不存在: " + templateName);
+                missingTemplates.add(normalizedTemplateName);
+                LOGGER.warning("EZItem模板不存在: " + normalizedTemplateName);
             }
         } catch (Exception e) {
-            LOGGER.warning("从EZItem获取物品失败: " + templateName + " - " + e.getMessage());
+            LOGGER.warning("从EZItem获取物品失败: " + normalizedTemplateName + " - " + e.getMessage());
         }
         
         return null;
+    }
+
+    /**
+     * 通过模板名称直接发放物品给玩家
+     * 由EZItem负责写入过期时间、绑定和扩展标记
+     *
+     * @param player 玩家
+     * @param templateName 模板名称
+     * @return 发放成功返回true
+     */
+    public boolean giveItemFromTemplate(Player player, String templateName) {
+        if (!isEZItemEnabled() || player == null || templateName == null || templateName.trim().isEmpty()) {
+            return false;
+        }
+
+        try {
+            return ezItemAPI.giveItemFromTemplate(player, templateName);
+        } catch (Exception e) {
+            LOGGER.warning("通过EZItem模板发放物品失败: " + templateName + " - " + e.getMessage());
+            return false;
+        }
+    }
+
+    public boolean isEZItem(ItemStack item) {
+        if (!isEZItemEnabled() || item == null) {
+            return false;
+        }
+
+        try {
+            return ezItemAPI.isEZItem(item);
+        } catch (Exception e) {
+            LOGGER.warning("检测EZItem物品失败: " + e.getMessage());
+            return false;
+        }
     }
     
     /**
@@ -119,6 +176,9 @@ public class EZItemIntegration {
      */
     public ItemStack getKitItem(String kitType, int level, String equipType) {
         String templateName = generateTemplateName(kitType, level, equipType);
+        if (templateName == null) {
+            return null;
+        }
         return getItemByTemplate(templateName);
     }
     
@@ -155,9 +215,11 @@ public class EZItemIntegration {
                 return level + "太阳sun" + equipType;
                 
             case "mining":
-                // 挖矿系列：1挖矿mining镐, 1挖矿mining头盔, 等（剑->镐）
-                String miningEquipType = equipType.equals("剑") ? "镐" : equipType;
-                return level + "挖矿mining" + miningEquipType;
+                // 挖矿系列只有矿稿，没有护甲
+                if (!"剑".equals(equipType)) {
+                    return null;
+                }
+                return level + "挖矿mining稿";
                 
             case "galaxy":
                 // 新银河系列：新银河1_剑, 新银河1_头盔, 等

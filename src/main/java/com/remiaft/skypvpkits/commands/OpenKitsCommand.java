@@ -94,6 +94,14 @@ public class OpenKitsCommand implements CommandExecutor, TabCompleter {
             case "银河":
             case "galaxy":
                 return "galaxy";
+            case "沾星顾月":
+            case "沾星":
+            case "zxgy":
+                return "zxgy";
+            case "仰望星辰":
+            case "星辰":
+            case "ywxc":
+                return "ywxc";
             default:
                 return null;
         }
@@ -108,7 +116,7 @@ public class OpenKitsCommand implements CommandExecutor, TabCompleter {
             Bukkit.getOnlinePlayers().forEach(player -> completions.add(player.getName()));
         } else if (args.length == 2) {
             // 礼包类型
-            completions.addAll(Arrays.asList("天空", "火星", "地球", "月球", "太阳", "挖矿", "银河"));
+            completions.addAll(Arrays.asList("天空", "火星", "地球", "月球", "太阳", "挖矿", "银河", "沾星顾月", "仰望星辰"));
         }
         
         // 过滤匹配的补全

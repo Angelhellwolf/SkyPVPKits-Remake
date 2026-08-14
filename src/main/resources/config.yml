@@ -6,7 +6,7 @@ server:
   # 服务器是否度过安全期 (true=正常, false=困难阶段)
   safe_period: true
   # 联系QQ号
-  contact_qq: "2076049239"
+  contact_qq: "NULL"
 
 # 数据库设置
 database:
@@ -14,7 +14,7 @@ database:
   type: "sqlite"
   # SQLite文件路径 (相对于插件数据文件夹)
   sqlite_file: "database.db"
-  
+
   # MySQL设置 (当type为mysql时使用)
   mysql:
     host: "localhost"
@@ -118,8 +118,8 @@ kits:
       - "§7新银河系列装备"
     icon: "BEACON"
     levels: 4
-    permanent_prices: [ 55000, 75000, 110000, 60000 ]
-    level_discounts: [ 1.0, 1.0, 1.0, 1.0 ]  # 所有等级正常价格
+    permanent_prices: [55000, 75000, 110000, 160000]
+    level_discounts: [1.0, 1.0, 1.0, 1.0]  # 所有等级正常价格
     support_points: true
     support_monthly: true
 
@@ -151,7 +151,7 @@ messages:
   player_not_found: "§c找不到这个玩家呢 §f(╥﹏╥)"
   kit_not_found: "§c这个礼包不存在哦 §f(´･_･`)"
   level_not_found: "§c等级不存在呢 §f(´・ω・`)"
-  already_owned: "§c你已经拥有这个礼包了~ §f(｡◕‿◕｡)"
+  already_owned: "§e你已经拥有这个礼包或更高等级礼包了~ §f(｡◕‿◕｡)"
   need_previous_level: "§c需要先购买等级 {level} 才能买这个呢 §f(´∀｀)"
   insufficient_points: "§c点券不够啦~ 还需要 {amount} 点券 §f(╥﹏╥)"
   insufficient_money: "§c硬币不够呢~ 还需要 {amount} 硬币 §f(´･_･`)"
@@ -1707,7 +1707,7 @@ kit_rewards:
     1:
       items:
         - "1天空头盔"
-        - "1天空胸甲" 
+        - "1天空胸甲"
         - "1天空护腿"
         - "1天空鞋子"
         - "1天空剑"
@@ -1721,7 +1721,7 @@ kit_rewards:
       items:
         - "2天空头盔"
         - "2天空胸甲"
-        - "2天空护腿" 
+        - "2天空护腿"
         - "2天空鞋子"
         - "2天空剑"
         - "附魔金苹果"
@@ -1735,7 +1735,7 @@ kit_rewards:
         - "3天空头盔"
         - "3天空胸甲"
         - "3天空护腿"
-        - "3天空鞋子" 
+        - "3天空鞋子"
         - "3天空剑"
       special_rewards:
         - "§7• 天空3级装备套装"
@@ -1907,7 +1907,7 @@ kit_rewards:
       items:
         - "1太阳sun头盔"
         - "1太阳sun胸甲"
-        - "1太阳sun护腿" 
+        - "1太阳sun护腿"
         - "1太阳sun鞋子"
         - "1太阳sun剑"
       special_rewards:
@@ -1943,6 +1943,7 @@ kit_rewards:
       special_rewards:
         - "§7• 太阳4级精英套装"
         - "§e• 烈日焚烧"
+        - "§6• 小丑苹果 x3"
     5:
       items:
         - "5太阳sun头盔"

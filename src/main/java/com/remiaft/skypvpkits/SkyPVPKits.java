@@ -1,9 +1,7 @@
 package com.remiaft.skypvpkits;
 
-import com.remiaft.skypvpkits.commands.InitializeItemsCommand;
 import com.remiaft.skypvpkits.commands.KitsCommand;
 import com.remiaft.skypvpkits.commands.OpenKitsCommand;
-import com.remiaft.skypvpkits.commands.TestEZItemCommand;
 import com.remiaft.skypvpkits.listeners.MenuListener;
 import com.remiaft.skypvpkits.managers.ConfigManager;
 import com.remiaft.skypvpkits.managers.DatabaseManager;
@@ -11,6 +9,7 @@ import com.remiaft.skypvpkits.managers.KitManager;
 import com.remiaft.skypvpkits.managers.MenuManager;
 import com.remiaft.skypvpkits.utils.ItemLoader;
 import com.remiaft.skypvpkits.utils.EZItemIntegration;
+import org.bukkit.command.PluginCommand;
 import org.bukkit.plugin.java.JavaPlugin;
 
 /**
@@ -52,10 +51,11 @@ public final class SkyPVPKits extends JavaPlugin {
         }
         
         // 注册命令
-        getCommand("kits").setExecutor(new KitsCommand(this));
-        getCommand("openkits").setExecutor(new OpenKitsCommand(this));
-        getCommand("initializeitems").setExecutor(new InitializeItemsCommand(this));
-        getCommand("testezitem").setExecutor(new TestEZItemCommand(this));
+        KitsCommand kitsCommand = new KitsCommand(this);
+        OpenKitsCommand openKitsCommand = new OpenKitsCommand(this);
+        registerCommand("kits", kitsCommand, kitsCommand);
+        registerCommand("skypvpkits", kitsCommand, kitsCommand);
+        registerCommand("openkits", openKitsCommand, openKitsCommand);
         
         // 注册事件监听器
         getServer().getPluginManager().registerEvents(new MenuListener(this), this);
@@ -75,6 +75,39 @@ public final class SkyPVPKits extends JavaPlugin {
             databaseManager.closeConnection();
         }
         getLogger().info("SkyPVPKits plugin has been disabled!");
+    }
+
+    private void registerCommand(String commandName,
+                                 org.bukkit.command.CommandExecutor executor,
+                                 org.bukkit.command.TabCompleter tabCompleter) {
+        PluginCommand command = getCommand(commandName);
+        if (command == null) {
+            getLogger().severe("Command not found in plugin.yml: " + commandName);
+            return;
+        }
+        command.setExecutor(executor);
+        command.setTabCompleter(tabCompleter);
+    }
+
+    public void reloadPluginData() {
+        if (configManager != null) {
+            configManager.reload();
+        } else {
+            reloadConfig();
+        }
+
+        if (kitManager != null) {
+            kitManager.reload();
+        }
+
+        if (itemLoader != null) {
+            itemLoader.clearCache();
+        }
+        itemLoader = new ItemLoader(getConfig());
+
+        if (ezItemIntegration != null) {
+            ezItemIntegration.reinitialize();
+        }
     }
     
     // Getters

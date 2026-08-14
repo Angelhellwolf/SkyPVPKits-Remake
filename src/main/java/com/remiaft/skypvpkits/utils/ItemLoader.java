@@ -9,11 +9,9 @@ import org.bukkit.inventory.ItemStack;
 import org.bukkit.inventory.meta.ItemMeta;
 import org.bukkit.inventory.meta.LeatherArmorMeta;
 
-import java.util.ArrayList;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
+import java.util.*;
 import java.util.logging.Logger;
+import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * 物品加载器 - 从配置文件加载物品定义
@@ -23,15 +21,32 @@ import java.util.logging.Logger;
  * @author AngelHell
  */
 public class ItemLoader {
-    
+
     private static final Logger LOGGER = Logger.getLogger(ItemLoader.class.getName());
+    private static final int MAX_CACHE_SIZE = 500;
+    private static final long CACHE_EXPIRE_MS = 30 * 60 * 1000; // 30分钟过期
+
     private final FileConfiguration config;
-    private final Map<String, ItemStack> itemCache;
+    private final Map<String, CacheEntry> itemCache;
     private final SkyPVPKits plugin;
-    
+
+    private static class CacheEntry {
+        final ItemStack item;
+        final long timestamp;
+
+        CacheEntry(ItemStack item) {
+            this.item = item;
+            this.timestamp = System.currentTimeMillis();
+        }
+
+        boolean isExpired() {
+            return System.currentTimeMillis() - timestamp > CACHE_EXPIRE_MS;
+        }
+    }
+
     public ItemLoader(FileConfiguration config) {
         this.config = config;
-        this.itemCache = new HashMap<>();
+        this.itemCache = new ConcurrentHashMap<>();
         this.plugin = SkyPVPKits.getInstance();
         LOGGER.info("物品加载器初始化完成");
     }
@@ -43,29 +58,38 @@ public class ItemLoader {
      * @return 创建的物品，如果失败返回null
      */
     public ItemStack getItemFromConfig(String itemKey) {
-        // 检查缓存
-        if (itemCache.containsKey(itemKey)) {
-            return itemCache.get(itemKey).clone();
+        // 检查缓存并清理过期项
+        CacheEntry cached = itemCache.get(itemKey);
+        if (cached != null) {
+            if (!cached.isExpired()) {
+                return cached.item.clone();
+            } else {
+                itemCache.remove(itemKey);
+            }
         }
-        
+
+        // 清理缓存大小
+        if (itemCache.size() >= MAX_CACHE_SIZE) {
+            cleanExpiredCache();
+        }
+
         ItemStack item = null;
-        
+
         // 优先尝试从EZItem获取
-        if (plugin != null && plugin.getEZItemIntegration() != null 
+        if (plugin != null && plugin.getEZItemIntegration() != null
             && plugin.getEZItemIntegration().isEZItemEnabled()) {
             try {
                 item = plugin.getEZItemIntegration().getItemByTemplate(itemKey);
                 if (item != null) {
                     LOGGER.fine("从EZItem获取物品: " + itemKey);
-                    // 缓存物品
-                    itemCache.put(itemKey, item.clone());
+                    itemCache.put(itemKey, new CacheEntry(item.clone()));
                     return item.clone();
                 }
             } catch (Exception e) {
                 LOGGER.warning("从EZItem获取物品失败: " + itemKey + " - " + e.getMessage());
             }
         }
-        
+
         // 如果EZItem获取失败，尝试从配置文件获取
         try {
             ConfigurationSection itemSection = config.getConfigurationSection("items." + itemKey);
@@ -73,21 +97,26 @@ public class ItemLoader {
                 LOGGER.warning("物品配置不存在: " + itemKey);
                 return null;
             }
-            
+
             item = createItemFromConfig(itemSection);
             if (item != null) {
                 LOGGER.fine("从配置文件获取物品: " + itemKey);
-                // 缓存物品
-                itemCache.put(itemKey, item.clone());
+                itemCache.put(itemKey, new CacheEntry(item.clone()));
             }
-            
+
             return item;
-            
+
         } catch (Exception e) {
             LOGGER.severe("加载物品失败: " + itemKey + " - " + e.getMessage());
-            e.printStackTrace();
             return null;
         }
+    }
+
+    /**
+     * 清理过期的缓存项
+     */
+    private void cleanExpiredCache() {
+        itemCache.entrySet().removeIf(entry -> entry.getValue().isExpired());
     }
     
     /**
@@ -121,6 +150,9 @@ public class ItemLoader {
             if (meta != null) {
                 // 设置显示名称
                 String displayName = section.getString("display_name");
+                if (displayName == null) {
+                    displayName = section.getString("display-name");
+                }
                 if (displayName != null) {
                     meta.setDisplayName(displayName.replace("&", "§"));
                 }
@@ -167,7 +199,6 @@ public class ItemLoader {
             
         } catch (Exception e) {
             LOGGER.severe("创建物品时发生错误: " + e.getMessage());
-            e.printStackTrace();
             return null;
         }
     }
@@ -275,6 +306,23 @@ public class ItemLoader {
      */
     public List<ItemStack> getKitRewardItems(String kitType, int level) {
         List<ItemStack> items = new ArrayList<>();
+        List<String> configuredRewardKeys = config.getStringList("kit_rewards." + kitType + "." + level + ".items");
+
+        if (!configuredRewardKeys.isEmpty()) {
+            for (String itemKey : configuredRewardKeys) {
+                if (itemKey == null || itemKey.trim().isEmpty()) {
+                    continue;
+                }
+                ItemStack item = getItemFromConfig(itemKey);
+                if (item != null) {
+                    items.add(item);
+                }
+            }
+
+            LOGGER.fine("从奖励配置获取礼包物品: " + kitType + " 等级 " + level + " (" + items.size() + "个物品)");
+            return items;
+        }
+
         String[] equipTypes = {"剑", "头盔", "胸甲", "护腿", "鞋子"};
         
         // 优先使用EZItem API
@@ -370,7 +418,10 @@ public class ItemLoader {
             case "sun":
                 return level + "太阳sun" + equipType;
             case "mining":
-                return level + "挖矿mining" + equipType;
+                if ("剑".equals(equipType)) {
+                    return level + "挖矿mining稿";
+                }
+                return null;
             case "galaxy":
                 String galaxyEquipType = equipType;
                 if (equipType.equals("护腿")) galaxyEquipType = "裤";

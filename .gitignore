@@ -1,0 +1,50 @@
+﻿# Build
+target/
+build/
+out/
+bin/
+dist/
+*.class
+*.jar
+!libs/**/*.jar
+!lib/**/*.jar
+dependency-reduced-pom.xml
+
+# IDE
+.idea/
+*.iml
+*.ipr
+*.iws
+.vscode/
+.cursor/
+*.swp
+*~
+
+# Gradle / Maven local caches
+.gradle/
+.gradle-user-home/
+.kotlin/
+.m2/
+.m2repo/
+**/build/
+!src/**/build/
+
+# AI / agent caches
+.claude/
+.codex/
+.agents/
+.codex-build/
+.codex-tmp/
+.home/
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Logs / temp
+*.log
+*.tmp
+*.bak
+hs_err_pid*
+replay_pid*

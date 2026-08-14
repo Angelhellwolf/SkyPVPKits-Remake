@@ -1,12 +1,18 @@
 package com.remiaft.skypvpkits.managers;
 
 import com.remiaft.skypvpkits.SkyPVPKits;
+import com.remiaft.skypvpkits.bridge.SkyPVPItemBridge;
 import com.remiaft.skypvpkits.data.PlayerKitData;
 import me.clip.placeholderapi.PlaceholderAPI;
+import net.milkbowl.vault.economy.Economy;
+import org.bukkit.plugin.RegisteredServiceProvider;
 import org.bukkit.Bukkit;
 import org.bukkit.Material;
 import org.bukkit.entity.Player;
 import org.bukkit.inventory.ItemStack;
+import org.bukkit.inventory.PlayerInventory;
+import org.bukkit.inventory.meta.ItemMeta;
+import org.bukkit.inventory.meta.LeatherArmorMeta;
 import org.bukkit.inventory.meta.PotionMeta;
 import org.bukkit.potion.PotionEffect;
 import org.bukkit.potion.PotionEffectType;
@@ -29,14 +35,31 @@ public class KitManager {
     
     private final SkyPVPKits plugin;
     private final ConfigManager configManager;
+    private Economy economy;
     
     // 礼包类型常量
     public static final List<String> KIT_TYPES = Arrays.asList(
-        "sky", "mars", "earth", "moon", "sun", "mining", "galaxy"
+        "sky", "mars", "earth", "moon", "sun", "mining", "galaxy", "zxgy", "ywxc"
     );
     
     // 玩家礼包缓存
-    private final Map<String, List<PlayerKitData>> playerKitCache = new ConcurrentHashMap<>();
+    private final Map<String, CachedKitData> playerKitCache = new ConcurrentHashMap<>();
+    private final Map<String, List<ItemStack>> rewardTemplateCache = new ConcurrentHashMap<>();
+    private static final long CACHE_EXPIRE_MS = 60 * 1000; // 缓存60秒过期
+
+    private static class CachedKitData {
+        final List<PlayerKitData> data;
+        final long timestamp;
+
+        CachedKitData(List<PlayerKitData> data) {
+            this.data = data;
+            this.timestamp = System.currentTimeMillis();
+        }
+
+        boolean isExpired() {
+            return System.currentTimeMillis() - timestamp > CACHE_EXPIRE_MS;
+        }
+    }
     
     // 线程池管理
     private final ScheduledExecutorService executorService;
@@ -51,6 +74,7 @@ public class KitManager {
     public KitManager(SkyPVPKits plugin) {
         this.plugin = plugin;
         this.configManager = plugin.getConfigManager();
+        resolveEconomy();
         
         // 初始化线程池
         this.executorService = Executors.newScheduledThreadPool(MAX_THREADS, r -> {
@@ -138,8 +162,9 @@ public class KitManager {
      * 重载管理器
      */
     public void reload() {
-        // 清除缓存
         playerKitCache.clear();
+        rewardTemplateCache.clear();
+        resolveEconomy();
         plugin.getLogger().info("KitManager reloaded");
     }
     
@@ -150,22 +175,23 @@ public class KitManager {
         String playerKey = player.getUniqueId().toString();
         
         // 检查缓存
-        if (playerKitCache.containsKey(playerKey)) {
-            return CompletableFuture.completedFuture(playerKitCache.get(playerKey));
-        }
-        
-        // 使用自定义线程池异步获取
-        return executeAsync(playerKey, () -> {
-            try {
-                List<PlayerKitData> dataList = plugin.getDatabaseManager().getPlayerKitDataAsync(player.getUniqueId()).get();
-                // 更新缓存
-                playerKitCache.put(playerKey, dataList);
-                return dataList;
-            } catch (Exception e) {
-                plugin.getLogger().warning("获取玩家礼包数据失败: " + e.getMessage());
-                return new ArrayList<>();
+        CachedKitData cached = playerKitCache.get(playerKey);
+        if (cached != null) {
+            if (!cached.isExpired()) {
+                return CompletableFuture.completedFuture(cached.data);
             }
-        });
+            playerKitCache.remove(playerKey);
+        }
+
+        return plugin.getDatabaseManager().getPlayerKitDataAsync(player.getUniqueId())
+                .thenApplyAsync(dataList -> {
+                    playerKitCache.put(playerKey, new CachedKitData(dataList));
+                    return dataList;
+                }, executorService)
+                .exceptionally(throwable -> {
+                    plugin.getLogger().warning("获取玩家礼包数据失败: " + throwable.getMessage());
+                    return new ArrayList<>();
+                });
     }
     
     /**
@@ -191,17 +217,74 @@ public class KitManager {
                                    && !data.isExpired());
         });
     }
+
+    private int getMaxOwnedLevel(List<PlayerKitData> dataList, String kitType) {
+        return dataList.stream()
+                .filter(data -> data.getKitType().equalsIgnoreCase(kitType) && !data.isExpired())
+                .mapToInt(PlayerKitData::getKitLevel)
+                .max()
+                .orElse(0);
+    }
+
+    private int getMaxPermanentOwnedLevel(List<PlayerKitData> dataList, String kitType) {
+        return dataList.stream()
+                .filter(data -> data.getKitType().equalsIgnoreCase(kitType)
+                        && data.isPermanent()
+                        && !data.isExpired())
+                .mapToInt(PlayerKitData::getKitLevel)
+                .max()
+                .orElse(0);
+    }
+
+    private boolean hasActiveLevel(List<PlayerKitData> dataList, String kitType, int level) {
+        return dataList.stream()
+                .anyMatch(data -> data.getKitType().equalsIgnoreCase(kitType)
+                        && data.getKitLevel() == level
+                        && !data.isExpired());
+    }
+
+    private boolean hasPermanentLevel(List<PlayerKitData> dataList, String kitType, int level) {
+        return dataList.stream()
+                .anyMatch(data -> data.getKitType().equalsIgnoreCase(kitType)
+                        && data.getKitLevel() == level
+                        && data.isPermanent()
+                        && !data.isExpired());
+    }
+
+    private PurchaseResult resolvePermanentPurchaseBlockResult(List<PlayerKitData> dataList, String kitType, int level) {
+        int maxPermanentLevel = getMaxPermanentOwnedLevel(dataList, kitType);
+        if (maxPermanentLevel > level) {
+            return new PurchaseResult(false, "higher_level_owned",
+                    "你已永久拥有更高等级礼包 Lv." + maxPermanentLevel, maxPermanentLevel);
+        }
+        if (hasPermanentLevel(dataList, kitType, level)) {
+            return new PurchaseResult(false, "already_owned", "你已经永久拥有这个礼包了", level);
+        }
+        if (level > 1 && maxPermanentLevel < level - 1) {
+            return new PurchaseResult(false, "need_previous_permanent_level",
+                    "需要先永久拥有等级 " + (level - 1), level - 1);
+        }
+        return null;
+    }
+
+    private PurchaseResult resolveMonthlyPurchaseBlockResult(List<PlayerKitData> dataList, String kitType, int level) {
+        int maxActiveLevel = getMaxOwnedLevel(dataList, kitType);
+        if (maxActiveLevel >= level) {
+            if (maxActiveLevel > level) {
+                return new PurchaseResult(false, "higher_level_owned",
+                        "你已拥有更高等级礼包 Lv." + maxActiveLevel, maxActiveLevel);
+            }
+            return new PurchaseResult(false, "already_owned", "你已经拥有这个礼包了", level);
+        }
+        return resolvePermanentPurchaseBlockResult(dataList, kitType, level);
+    }
     
     /**
      * 获取玩家在指定礼包类型中的最高等级
      */
     public CompletableFuture<Integer> getPlayerMaxLevel(Player player, String kitType) {
         return getPlayerKitDataAsync(player).thenApply(dataList -> {
-            return dataList.stream()
-                    .filter(data -> data.getKitType().equals(kitType) && !data.isExpired())
-                    .mapToInt(PlayerKitData::getKitLevel)
-                    .max()
-                    .orElse(0);
+            return getMaxOwnedLevel(dataList, kitType);
         });
     }
     
@@ -209,31 +292,18 @@ public class KitManager {
      * 检查玩家是否可以购买指定礼包等级
      */
     public CompletableFuture<Boolean> canPurchaseLevel(Player player, String kitType, int level) {
-        return getPlayerMaxLevel(player, kitType).thenApply(maxLevel -> {
-            // 检查是否已经拥有该等级或更高等级
-            if (maxLevel >= level) {
-                return false;
-            }
-            
-            // 检查是否满足前置等级要求（必须按顺序购买）
-            // 对于等级1，不需要前置条件 (maxLevel >= 0)
-            // 对于等级2，需要拥有等级1 (maxLevel >= 1)
-            // 对于等级3，需要拥有等级2 (maxLevel >= 2)
-            return maxLevel >= level - 1;
-        });
-    }
-    
-    /**
-     * 检查是否支持硬币购买（仅天空和火星的1、2级）
-     */
-    private boolean supportsCoinsPurchase(String kitType, int level) {
-        return (kitType.equals("sky") || kitType.equals("mars")) && (level == 1 || level == 2);
+        return getPlayerKitDataAsync(player).thenApply(dataList ->
+                resolvePermanentPurchaseBlockResult(dataList, kitType, level) == null);
     }
     
     /**
      * 检查是否支持月付购买
      */
     public boolean supportsMonthlyPurchase(String kitType, int level) {
+        if (!configManager.isKitSupportMonthly(kitType)) {
+            return false;
+        }
+
         // 太阳礼包不支持月付
         if (kitType.equals("sun")) {
             return false;
@@ -254,26 +324,13 @@ public class KitManager {
     }
     
     /**
-     * 获取硬币价格（点券价格×100，仅限天空火星1-2级）
-     */
-    private int getCoinsPrice(String kitType, int level) {
-        if (!supportsCoinsPurchase(kitType, level)) {
-            return -1; // 不支持硬币购买
-        }
-        
-        int pointsPrice = getPermanentPrice(kitType, level);
-        return pointsPrice * 100;
-    }
-
-    /**
      * 购买礼包（永久）- 左键点击，点券购买
      */
     public CompletableFuture<PurchaseResult> purchaseKitPermanent(Player player, String kitType, int level) {
-        return canPurchaseLevel(player, kitType, level).thenCompose(canPurchase -> {
-            if (!canPurchase) {
-                return CompletableFuture.completedFuture(
-                    new PurchaseResult(false, "cannot_purchase", "无法购买此等级")
-                );
+        return getPlayerKitDataAsync(player).thenCompose(dataList -> {
+            PurchaseResult blocked = resolvePermanentPurchaseBlockResult(dataList, kitType, level);
+            if (blocked != null) {
+                return CompletableFuture.completedFuture(blocked);
             }
             
             // 检查是否支持点券购买
@@ -315,11 +372,10 @@ public class KitManager {
      * 硬币购买礼包（月付）- 硬币购买
      */
     public CompletableFuture<PurchaseResult> purchaseKitMonthlyWithCoins(Player player, String kitType, int level) {
-        return canPurchaseLevel(player, kitType, level).thenCompose(canPurchase -> {
-            if (!canPurchase) {
-                return CompletableFuture.completedFuture(
-                    new PurchaseResult(false, "cannot_purchase", "无法购买此等级")
-                );
+        return getPlayerKitDataAsync(player).thenCompose(dataList -> {
+            PurchaseResult blocked = resolveMonthlyPurchaseBlockResult(dataList, kitType, level);
+            if (blocked != null) {
+                return CompletableFuture.completedFuture(blocked);
             }
             
             // 检查是否支持月付购买
@@ -359,77 +415,83 @@ public class KitManager {
      */
     public CompletableFuture<ClaimResult> claimKitReward(Player player, String kitType, int level) {
         String playerKey = player.getUniqueId().toString();
-        
-        return executeAsync(playerKey, () -> {
-            try {
-                // 检查是否拥有该礼包
-                Boolean hasKit = hasKitLevel(player, kitType, level).get();
-                if (!hasKit) {
-                    return new ClaimResult(false, "not_owned", "你还没有购买这个礼包");
-                }
-                
-                List<PlayerKitData> dataList = getPlayerKitDataAsync(player).get();
-                
-                // 检查是否拥有更高等级的礼包（如果有，禁止领取低等级）
-                int maxLevel = dataList.stream()
-                        .filter(data -> data.getKitType().equals(kitType) && !data.isExpired())
-                        .mapToInt(PlayerKitData::getKitLevel)
-                        .max()
-                        .orElse(0);
-                
-                if (maxLevel > level) {
-                    return new ClaimResult(false, "higher_level_owned", 
-                        "你已拥有" + kitType + "礼包等级" + maxLevel + "，无法领取等级" + level + "的奖励");
-                }
-                
-                PlayerKitData kitData = dataList.stream()
-                        .filter(data -> data.getKitType().equals(kitType) 
-                                     && data.getKitLevel() == level 
-                                     && !data.isExpired())
-                        .findFirst()
-                        .orElse(null);
-                
-                if (kitData == null) {
-                    return new ClaimResult(false, "not_found", "礼包数据未找到");
-                }
-                
-                // 检查是否已经领取过
-                if (kitData.hasClaimedToday()) {
-                    return new ClaimResult(false, "already_claimed", "今天已经领取过了");
-                }
-                
-                // 标记为已领取
-                kitData.markClaimedToday();
-                
-                // 保存数据
-                Boolean saved = plugin.getDatabaseManager().savePlayerKitDataAsync(kitData).get();
-                if (saved) {
-                    // 在主线程中执行奖励命令
-                    plugin.getServer().getScheduler().runTask(plugin, () -> {
-                        executeKitRewards(player, kitType, level);
-                    });
-                    
-                    // 清除缓存
-                    playerKitCache.remove(player.getUniqueId().toString());
-                    return new ClaimResult(true, "success", "领取成功");
-                } else {
-                    return new ClaimResult(false, "database_error", "数据库错误");
-                }
-                
-            } catch (Exception e) {
-                plugin.getLogger().warning("领取礼包奖励失败: " + e.getMessage());
-                return new ClaimResult(false, "error", "处理过程中发生错误");
-            }
-        }).thenApply(result -> result != null ? result : new ClaimResult(false, "busy", "服务器繁忙，请稍后再试"));
+
+        if (requiresSkyPVPItem(kitType) && !SkyPVPItemBridge.isAvailable()) {
+            return CompletableFuture.completedFuture(
+                new ClaimResult(false, "dependency_missing", "SkyPVPItem 插件未安装或未启用")
+            );
+        }
+
+        if (!canProcessOperation(playerKey)) {
+            return CompletableFuture.completedFuture(new ClaimResult(false, "busy", "服务器繁忙，请稍后再试"));
+        }
+
+        startOperation(playerKey);
+
+        return getPlayerKitDataAsync(player)
+                .thenCompose(dataList -> {
+                    boolean hasKit = dataList.stream()
+                            .anyMatch(data -> data.getKitType().equals(kitType)
+                                    && data.getKitLevel() == level
+                                    && !data.isExpired());
+                    if (!hasKit) {
+                        return CompletableFuture.completedFuture(new ClaimResult(false, "not_owned", "你还没有购买这个礼包"));
+                    }
+
+                    // 检查是否拥有更高等级的礼包（如果有，禁止领取低等级）
+                    int maxLevel = dataList.stream()
+                            .filter(data -> data.getKitType().equals(kitType) && !data.isExpired())
+                            .mapToInt(PlayerKitData::getKitLevel)
+                            .max()
+                            .orElse(0);
+
+                    if (maxLevel > level) {
+                        return CompletableFuture.completedFuture(new ClaimResult(
+                                false,
+                                "higher_level_owned",
+                                "你已拥有" + kitType + "礼包等级" + maxLevel + "，无法领取等级" + level + "的奖励"
+                        ));
+                    }
+
+                    PlayerKitData kitData = dataList.stream()
+                            .filter(data -> data.getKitType().equals(kitType)
+                                    && data.getKitLevel() == level
+                                    && !data.isExpired())
+                            .findFirst()
+                            .orElse(null);
+
+                    if (kitData == null) {
+                        return CompletableFuture.completedFuture(new ClaimResult(false, "not_found", "礼包数据未找到"));
+                    }
+
+                    if (kitData.hasClaimedToday()) {
+                        return CompletableFuture.completedFuture(new ClaimResult(false, "already_claimed", "今天已经领取过了"));
+                    }
+
+                    kitData.markClaimedToday();
+
+                    return plugin.getDatabaseManager().savePlayerKitDataAsync(kitData)
+                            .thenApply(saved -> {
+                                if (!saved) {
+                                    return new ClaimResult(false, "database_error", "数据库错误");
+                                }
+
+                                plugin.getServer().getScheduler().runTask(plugin, () -> executeKitRewards(player, kitType, level));
+                                playerKitCache.remove(playerKey);
+                                return new ClaimResult(true, "success", "领取成功");
+                            });
+                })
+                .exceptionally(throwable -> {
+                    plugin.getLogger().warning("领取礼包奖励失败: " + throwable.getMessage());
+                    return new ClaimResult(false, "error", "处理过程中发生错误");
+                })
+                .whenComplete((result, throwable) -> endOperation(playerKey));
     }
     
     /**
      * 执行礼包奖励
      */
     private void executeKitRewards(Player player, String kitType, int level) {
-        String playerName = player.getName();
-        
-        // 根据礼包类型给予装备
         giveKitEquipment(player, kitType, level);
         
         // 特殊金苹果奖励
@@ -441,67 +503,201 @@ public class KitManager {
      */
     private void giveKitEquipment(Player player, String kitType, int level) {
         String playerName = player.getName();
-        
+
         switch (kitType) {
             case "sky":
-                // 天空系列：1天空剑, 1天空头盔, 1天空胸甲, 1天空护腿, 1天空鞋子
-                Bukkit.dispatchCommand(Bukkit.getConsoleSender(), "ezitem give " + playerName + " " + level + "天空剑");
-                Bukkit.dispatchCommand(Bukkit.getConsoleSender(), "ezitem give " + playerName + " " + level + "天空头盔");
-                Bukkit.dispatchCommand(Bukkit.getConsoleSender(), "ezitem give " + playerName + " " + level + "天空胸甲");
-                Bukkit.dispatchCommand(Bukkit.getConsoleSender(), "ezitem give " + playerName + " " + level + "天空护腿");
-                Bukkit.dispatchCommand(Bukkit.getConsoleSender(), "ezitem give " + playerName + " " + level + "天空鞋子");
-                break;
-                
             case "mars":
-                // 火星系列：1火星spark剑, 1火星spark头盔, 等
-                Bukkit.dispatchCommand(Bukkit.getConsoleSender(), "ezitem give " + playerName + " " + level + "火星spark剑");
-                Bukkit.dispatchCommand(Bukkit.getConsoleSender(), "ezitem give " + playerName + " " + level + "火星spark头盔");
-                Bukkit.dispatchCommand(Bukkit.getConsoleSender(), "ezitem give " + playerName + " " + level + "火星spark胸甲");
-                Bukkit.dispatchCommand(Bukkit.getConsoleSender(), "ezitem give " + playerName + " " + level + "火星spark护腿");
-                Bukkit.dispatchCommand(Bukkit.getConsoleSender(), "ezitem give " + playerName + " " + level + "火星spark鞋子");
-                break;
-                
             case "earth":
-                // 地球系列：地球1_剑, 地球1_头, 地球1_甲, 地球1_腿, 地球1_鞋
-                Bukkit.dispatchCommand(Bukkit.getConsoleSender(), "ezitem give " + playerName + " 地球" + level + "_剑");
-                Bukkit.dispatchCommand(Bukkit.getConsoleSender(), "ezitem give " + playerName + " 地球" + level + "_头");
-                Bukkit.dispatchCommand(Bukkit.getConsoleSender(), "ezitem give " + playerName + " 地球" + level + "_甲");
-                Bukkit.dispatchCommand(Bukkit.getConsoleSender(), "ezitem give " + playerName + " 地球" + level + "_腿");
-                Bukkit.dispatchCommand(Bukkit.getConsoleSender(), "ezitem give " + playerName + " 地球" + level + "_鞋");
-                break;
-                
             case "moon":
-                // 月球系列：1月球moon剑, 1月球moon头盔, 等
-                Bukkit.dispatchCommand(Bukkit.getConsoleSender(), "ezitem give " + playerName + " " + level + "月球moon剑");
-                Bukkit.dispatchCommand(Bukkit.getConsoleSender(), "ezitem give " + playerName + " " + level + "月球moon头盔");
-                Bukkit.dispatchCommand(Bukkit.getConsoleSender(), "ezitem give " + playerName + " " + level + "月球moon胸甲");
-                Bukkit.dispatchCommand(Bukkit.getConsoleSender(), "ezitem give " + playerName + " " + level + "月球moon护腿");
-                Bukkit.dispatchCommand(Bukkit.getConsoleSender(), "ezitem give " + playerName + " " + level + "月球moon鞋子");
-                break;
-                
             case "sun":
-                // 太阳系列：1太阳sun剑, 1太阳sun头盔, 等
-                Bukkit.dispatchCommand(Bukkit.getConsoleSender(), "ezitem give " + playerName + " " + level + "太阳sun剑");
-                Bukkit.dispatchCommand(Bukkit.getConsoleSender(), "ezitem give " + playerName + " " + level + "太阳sun头盔");
-                Bukkit.dispatchCommand(Bukkit.getConsoleSender(), "ezitem give " + playerName + " " + level + "太阳sun胸甲");
-                Bukkit.dispatchCommand(Bukkit.getConsoleSender(), "ezitem give " + playerName + " " + level + "太阳sun护腿");
-                Bukkit.dispatchCommand(Bukkit.getConsoleSender(), "ezitem give " + playerName + " " + level + "太阳sun鞋子");
-                break;
-                
             case "mining":
-                // 挖矿系列：1挖矿mining稿
-                Bukkit.dispatchCommand(Bukkit.getConsoleSender(), "ezitem give " + playerName + " " + level + "挖矿mining稿");
-                break;
-                
             case "galaxy":
-                // 新银河系列：新银河1_剑, 新银河1_头盔, 等
-                Bukkit.dispatchCommand(Bukkit.getConsoleSender(), "ezitem give " + playerName + " 新银河" + level + "_剑");
-                Bukkit.dispatchCommand(Bukkit.getConsoleSender(), "ezitem give " + playerName + " 新银河" + level + "_头盔");
-                Bukkit.dispatchCommand(Bukkit.getConsoleSender(), "ezitem give " + playerName + " 新银河" + level + "_胸甲");
-                Bukkit.dispatchCommand(Bukkit.getConsoleSender(), "ezitem give " + playerName + " 新银河" + level + "_裤");
-                Bukkit.dispatchCommand(Bukkit.getConsoleSender(), "ezitem give " + playerName + " 新银河" + level + "_鞋");
+                giveConfiguredRewardItems(player, kitType, level);
+                break;
+
+            case "zxgy":
+                if (!SkyPVPItemBridge.giveSet(player, "zxgy")) {
+                    plugin.getLogger().warning("无法通过 SkyPVPItem 发放沾星顾月套装给玩家 " + playerName);
+                    player.sendMessage("§c沾星顾月礼包发放失败，请联系管理员检查 SkyPVPItem 插件");
+                }
+                break;
+
+            case "ywxc":
+                if (!SkyPVPItemBridge.giveSet(player, "ywxc")) {
+                    plugin.getLogger().warning("无法通过 SkyPVPItem 发放仰望星辰套装给玩家 " + playerName);
+                    player.sendMessage("§c仰望星辰礼包发放失败，请联系管理员检查 SkyPVPItem 插件");
+                }
                 break;
         }
+    }
+
+    private void giveConfiguredRewardItems(Player player, String kitType, int level) {
+        List<String> configuredRewardKeys = configManager.getKitRewardItems(kitType, level);
+        if (configuredRewardKeys.isEmpty()) {
+            plugin.getLogger().warning("礼包 " + kitType + " 等级 " + level + " 没有配置EZItem模板");
+            player.sendMessage("§c该礼包未配置 EZItem 模板，无法发放");
+            return;
+        }
+
+        if (plugin.getEZItemIntegration() == null || !plugin.getEZItemIntegration().isEZItemEnabled()) {
+            plugin.getLogger().warning("EZItem 未启用，无法发放礼包 " + kitType + " 等级 " + level);
+            player.sendMessage("§cEZItem 未启用，无法发放该礼包");
+            return;
+        }
+
+        int cleanedLegacyItems = cleanupLegacyIssuedItems(player, kitType, level);
+        if (cleanedLegacyItems > 0) {
+            player.sendMessage("§e已自动清理旧版手动发放装备 " + cleanedLegacyItems + " 件，并替换为 EZItem 版本");
+        }
+
+        for (String itemKey : configuredRewardKeys) {
+            if (itemKey == null || itemKey.trim().isEmpty()) {
+                continue;
+            }
+
+            if (plugin.getEZItemIntegration().getItemByTemplate(itemKey) == null) {
+                plugin.getLogger().warning("EZItem模板不存在，停止发放: " + itemKey);
+                player.sendMessage("§c礼包模板缺失: " + itemKey);
+                return;
+            }
+        }
+
+        for (String itemKey : configuredRewardKeys) {
+            if (itemKey == null || itemKey.trim().isEmpty()) {
+                continue;
+            }
+
+            if (!plugin.getEZItemIntegration().giveItemFromTemplate(player, itemKey)) {
+                plugin.getLogger().warning("EZItem模板发放失败，中止礼包发放: " + itemKey);
+                player.sendMessage("§c礼包发放失败，请联系管理员检查模板: " + itemKey);
+                return;
+            }
+        }
+    }
+
+    public int cleanupLegacyIssuedItems(Player player, String kitType, int level) {
+        if (player == null || plugin.getEZItemIntegration() == null || !plugin.getEZItemIntegration().isEZItemEnabled()) {
+            return 0;
+        }
+
+        List<ItemStack> templateItems = getRewardTemplateItems(kitType, level);
+        if (templateItems.isEmpty()) {
+            return 0;
+        }
+
+        int removed = 0;
+        PlayerInventory inventory = player.getInventory();
+
+        ItemStack[] contents = inventory.getContents();
+        for (int i = 0; i < contents.length; i++) {
+            ItemStack candidate = contents[i];
+            if (shouldRemoveLegacyItem(candidate, templateItems)) {
+                contents[i] = null;
+                removed++;
+            }
+        }
+        inventory.setContents(contents);
+
+        ItemStack[] armorContents = inventory.getArmorContents();
+        for (int i = 0; i < armorContents.length; i++) {
+            ItemStack candidate = armorContents[i];
+            if (shouldRemoveLegacyItem(candidate, templateItems)) {
+                armorContents[i] = null;
+                removed++;
+            }
+        }
+        inventory.setArmorContents(armorContents);
+
+        return removed;
+    }
+
+    private List<ItemStack> getRewardTemplateItems(String kitType, int level) {
+        String cacheKey = kitType + ":" + level;
+        List<ItemStack> cachedItems = rewardTemplateCache.get(cacheKey);
+        if (cachedItems != null) {
+            return cloneItems(cachedItems);
+        }
+
+        List<ItemStack> templateItems = new ArrayList<>();
+        List<String> configuredRewardKeys = configManager.getKitRewardItems(kitType, level);
+        for (String itemKey : configuredRewardKeys) {
+            if (itemKey == null || itemKey.trim().isEmpty()) {
+                continue;
+            }
+
+            ItemStack templateItem = plugin.getEZItemIntegration().getItemByTemplate(itemKey);
+            if (templateItem != null) {
+                templateItems.add(templateItem);
+            }
+        }
+        rewardTemplateCache.put(cacheKey, cloneItems(templateItems));
+        return templateItems;
+    }
+
+    private boolean shouldRemoveLegacyItem(ItemStack candidate, List<ItemStack> templateItems) {
+        if (candidate == null || candidate.getType() == Material.AIR) {
+            return false;
+        }
+
+        for (ItemStack templateItem : templateItems) {
+            if (matchesLegacyIssuedItem(candidate, templateItem)) {
+                return !plugin.getEZItemIntegration().isEZItem(candidate);
+            }
+        }
+        return false;
+    }
+
+    private List<ItemStack> cloneItems(List<ItemStack> items) {
+        List<ItemStack> clones = new ArrayList<>(items.size());
+        for (ItemStack item : items) {
+            clones.add(item == null ? null : item.clone());
+        }
+        return clones;
+    }
+
+    private boolean matchesLegacyIssuedItem(ItemStack candidate, ItemStack templateItem) {
+        if (candidate == null || templateItem == null) {
+            return false;
+        }
+        if (candidate.getType() != templateItem.getType()) {
+            return false;
+        }
+
+        ItemMeta candidateMeta = candidate.getItemMeta();
+        ItemMeta templateMeta = templateItem.getItemMeta();
+        if (!sameDisplayName(candidateMeta, templateMeta)) {
+            return false;
+        }
+        if (!sameLore(candidateMeta, templateMeta)) {
+            return false;
+        }
+        if (!candidate.getEnchantments().equals(templateItem.getEnchantments())) {
+            return false;
+        }
+        return sameLeatherColor(candidateMeta, templateMeta);
+    }
+
+    private boolean sameDisplayName(ItemMeta first, ItemMeta second) {
+        String firstName = first != null && first.hasDisplayName() ? first.getDisplayName() : null;
+        String secondName = second != null && second.hasDisplayName() ? second.getDisplayName() : null;
+        return java.util.Objects.equals(firstName, secondName);
+    }
+
+    private boolean sameLore(ItemMeta first, ItemMeta second) {
+        List<String> firstLore = first != null && first.hasLore() ? first.getLore() : null;
+        List<String> secondLore = second != null && second.hasLore() ? second.getLore() : null;
+        return java.util.Objects.equals(firstLore, secondLore);
+    }
+
+    private boolean sameLeatherColor(ItemMeta first, ItemMeta second) {
+        if (first instanceof LeatherArmorMeta && second instanceof LeatherArmorMeta) {
+            return ((LeatherArmorMeta) first).getColor().equals(((LeatherArmorMeta) second).getColor());
+        }
+        return !(first instanceof LeatherArmorMeta) && !(second instanceof LeatherArmorMeta);
+    }
+
+    private boolean requiresSkyPVPItem(String kitType) {
+        return "zxgy".equals(kitType) || "ywxc".equals(kitType);
     }
     
     /**
@@ -519,6 +715,16 @@ public class KitManager {
                 // 太阳金苹果 - 初始4个，每级+4个
                 int sunApples = 4 + (4 * level);
                 giveGoldenApples(player, sunApples, true);
+
+                // 太阳4级特殊奖励
+                if (level == 4) {
+                    giveSunLevel4SpecialRewards(player);
+                }
+
+                // 太阳5级特殊奖励
+                if (level == 5) {
+                    giveSunLevel5SpecialRewards(player);
+                }
                 break;
                 
             case "galaxy":
@@ -538,8 +744,6 @@ public class KitManager {
                 break;
                 
             case "mining":
-                // 挖矿金苹果 - 固定1个
-                giveGoldenApples(player, 1, true);
                 break;
         }
         
@@ -547,6 +751,34 @@ public class KitManager {
         givePotionRewards(player, kitType, level);
     }
     
+    /**
+     * 给予太阳4级特殊奖励
+     * 通过控制台调度 sunkits 插件命令
+     */
+    private void giveSunLevel4SpecialRewards(Player player) {
+        String playerName = player.getName();
+
+        // 小丑果实 3个
+        Bukkit.dispatchCommand(Bukkit.getConsoleSender(), "sunkits give " + playerName + " clownfruit 3");
+    }
+
+    /**
+     * 给予太阳5级特殊奖励
+     * 通过控制台调度 sunkits 插件命令
+     */
+    private void giveSunLevel5SpecialRewards(Player player) {
+        String playerName = player.getName();
+
+        // 善良果实 4个
+        Bukkit.dispatchCommand(Bukkit.getConsoleSender(), "sunkits give " + playerName + " goodfruit 4");
+
+        // 小丑果实 10个
+        Bukkit.dispatchCommand(Bukkit.getConsoleSender(), "sunkits give " + playerName + " clownfruit 10");
+
+        // 除你武器 2个
+        Bukkit.dispatchCommand(Bukkit.getConsoleSender(), "sunkits give " + playerName + " weapon 2");
+    }
+
     /**
      * 给予金苹果
      */
@@ -658,32 +890,24 @@ public class KitManager {
      */
     private CompletableFuture<Boolean> checkAndDeductPoints(Player player, int amount) {
         CompletableFuture<Boolean> future = new CompletableFuture<>();
-        
-        // 在异步线程中检查余额
-        CompletableFuture.supplyAsync(() -> {
-            // 使用PlaceholderAPI获取点券余额
-            String pointsStr = PlaceholderAPI.setPlaceholders(player, "%remiaftvalue_Points%");
-            
+
+        plugin.getServer().getScheduler().runTask(plugin, () -> {
             try {
+                String pointsStr = PlaceholderAPI.setPlaceholders(player, "%remiaftvalue_Points%");
                 int currentPoints = Integer.parseInt(pointsStr);
-                return currentPoints >= amount ? currentPoints : -1;
-            } catch (NumberFormatException e) {
-                plugin.getLogger().warning("无法解析玩家点券数量: " + pointsStr);
-                return -1;
-            }
-        }).thenAccept(currentPoints -> {
                 if (currentPoints >= amount) {
-                // 在主线程中执行命令
-                plugin.getServer().getScheduler().runTask(plugin, () -> {
-                    Bukkit.dispatchCommand(Bukkit.getConsoleSender(), 
-                        "value take " + player.getName() + " Points " + amount);
+                    Bukkit.dispatchCommand(Bukkit.getConsoleSender(),
+                            "value take " + player.getName() + " Points " + amount);
                     future.complete(true);
-                });
-            } else {
+                } else {
+                    future.complete(false);
+                }
+            } catch (Exception e) {
+                plugin.getLogger().warning("无法解析玩家点券数量");
                 future.complete(false);
             }
         });
-            
+
         return future;
     }
     
@@ -692,32 +916,24 @@ public class KitManager {
      */
     private CompletableFuture<Boolean> checkAndDeductCoins(Player player, int amount) {
         CompletableFuture<Boolean> future = new CompletableFuture<>();
-        
-        // 在异步线程中检查余额
-        CompletableFuture.supplyAsync(() -> {
-            // 使用PlaceholderAPI获取硬币余额
-            String coinsStr = PlaceholderAPI.setPlaceholders(player, "%vault_eco_balance_fixed%");
-            
+
+        plugin.getServer().getScheduler().runTask(plugin, () -> {
             try {
+                String coinsStr = PlaceholderAPI.setPlaceholders(player, "%vault_eco_balance_fixed%");
                 double currentCoins = Double.parseDouble(coinsStr);
-                return currentCoins >= amount ? currentCoins : -1.0;
-            } catch (NumberFormatException e) {
-                plugin.getLogger().warning("无法解析玩家硬币数量: " + coinsStr);
-                return -1.0;
-            }
-        }).thenAccept(currentCoins -> {
                 if (currentCoins >= amount) {
-                // 在主线程中执行命令
-                plugin.getServer().getScheduler().runTask(plugin, () -> {
-                    Bukkit.dispatchCommand(Bukkit.getConsoleSender(), 
-                        "eco take " + player.getName() + " " + amount);
+                    Bukkit.dispatchCommand(Bukkit.getConsoleSender(),
+                            "eco take " + player.getName() + " " + amount);
                     future.complete(true);
-                });
-            } else {
+                } else {
+                    future.complete(false);
+                }
+            } catch (Exception e) {
+                plugin.getLogger().warning("无法解析玩家硬币数量");
                 future.complete(false);
             }
         });
-            
+
         return future;
     }
     
@@ -798,7 +1014,6 @@ public class KitManager {
                     });
         }).exceptionally(throwable -> {
             plugin.getLogger().severe("删除礼包等级时发生错误: " + throwable.getMessage());
-            throwable.printStackTrace();
             return new PurchaseResult(false, "error", "删除过程中发生错误");
         });
     }
@@ -843,14 +1058,136 @@ public class KitManager {
                     });
         }).exceptionally(throwable -> {
             plugin.getLogger().severe("删除礼包等级时发生错误: " + throwable.getMessage());
-            throwable.printStackTrace();
             return new PurchaseResult(false, "error", "删除过程中发生错误");
+        });
+    }
+
+    public CompletableFuture<BulkRemoveResult> removeAllKitLevels(String kitType, int level) {
+        return plugin.getDatabaseManager().getPlayersByKitAsync(kitType, level).thenCompose(playerUUIDs -> {
+            if (playerUUIDs.isEmpty()) {
+                return CompletableFuture.completedFuture(
+                    new BulkRemoveResult(false, "not_owned", "没有玩家拥有此礼包等级", 0, 0, playerUUIDs)
+                );
+            }
+
+            return plugin.getDatabaseManager().removeAllPlayerKitDataAsync(kitType, level)
+                    .thenApply(deletedRecords -> {
+                        if (deletedRecords <= 0) {
+                            return new BulkRemoveResult(false, "database_error", "数据库删除失败", 0, 0, playerUUIDs);
+                        }
+
+                        for (java.util.UUID playerUUID : playerUUIDs) {
+                            playerKitCache.remove(playerUUID.toString());
+                            plugin.getDatabaseManager().savePurchaseHistoryAsync(
+                                playerUUID, kitType, level,
+                                true, 0, "REMOVE",
+                                "管理员批量回收操作"
+                            );
+                        }
+
+                        return new BulkRemoveResult(
+                            true,
+                            "success",
+                            "批量回收成功",
+                            playerUUIDs.size(),
+                            deletedRecords,
+                            playerUUIDs
+                        );
+                    });
+        }).exceptionally(throwable -> {
+            plugin.getLogger().severe("批量回收礼包等级时发生错误: " + throwable.getMessage());
+            return new BulkRemoveResult(false, "error", "批量回收过程中发生错误", 0, 0, java.util.Collections.emptyList());
         });
     }
     
     /**
      * 管理员给予礼包功能
      */
+    public CompletableFuture<TemporaryGrantResult> grantTemporaryKitOrCompensate(Player player, String kitType, int level, int durationDays, double compensationCoins) {
+        if (player == null || kitType == null || kitType.trim().isEmpty() || level <= 0) {
+            return CompletableFuture.completedFuture(new TemporaryGrantResult(false, false, false, "参数无效"));
+        }
+
+        final int safeDurationDays = Math.max(1, durationDays);
+        return getPlayerKitDataAsync(player).thenCompose(dataList -> {
+            boolean alreadyOwned = dataList.stream()
+                    .anyMatch(data -> data.getKitType().equalsIgnoreCase(kitType)
+                            && data.getKitLevel() >= level
+                            && !data.isExpired());
+
+            if (alreadyOwned) {
+                return depositCompensationAsync(player, compensationCoins).thenApply(compensated -> {
+                    if (!compensated) {
+                        return new TemporaryGrantResult(false, false, false, "补偿失败");
+                    }
+                    return new TemporaryGrantResult(true, false, true, "已补偿硬币");
+                });
+            }
+
+            PlayerKitData kitData = new PlayerKitData(
+                    player.getUniqueId(),
+                    kitType,
+                    level,
+                    false,
+                    LocalDateTime.now(),
+                    LocalDateTime.now().plusDays(safeDurationDays),
+                    null
+            );
+
+            return plugin.getDatabaseManager().insertPlayerKitDataAsync(kitData)
+                    .thenApply(saved -> {
+                        if (!saved) {
+                            return new TemporaryGrantResult(false, false, false, "数据库错误");
+                        }
+                        plugin.getDatabaseManager().savePurchaseHistoryAsync(
+                                player.getUniqueId(), kitType, level, false, 0, "BATTLEPASS_TEMP",
+                                "BattlePass temporary grant " + safeDurationDays + "d"
+                        );
+                        playerKitCache.remove(player.getUniqueId().toString());
+                        notifyBattlePassKitClaim(player, kitType, level);
+                        return new TemporaryGrantResult(true, true, false, "发放成功");
+                    });
+        }).exceptionally(throwable -> {
+            plugin.getLogger().warning("临时礼包发放失败: " + throwable.getMessage());
+            return new TemporaryGrantResult(false, false, false, "处理失败");
+        });
+    }
+
+    private CompletableFuture<Boolean> depositCompensationAsync(Player player, double compensationCoins) {
+        CompletableFuture<Boolean> future = new CompletableFuture<>();
+        plugin.getServer().getScheduler().runTask(plugin, () -> {
+            if (compensationCoins <= 0.0D) {
+                future.complete(true);
+                return;
+            }
+            if (economy == null) {
+                future.complete(false);
+                return;
+            }
+            economy.depositPlayer(player, compensationCoins);
+            future.complete(true);
+        });
+        return future;
+    }
+
+    private void resolveEconomy() {
+        if (Bukkit.getPluginManager().getPlugin("Vault") == null) {
+            this.economy = null;
+            return;
+        }
+        RegisteredServiceProvider<Economy> provider = Bukkit.getServicesManager().getRegistration(Economy.class);
+        this.economy = provider == null ? null : provider.getProvider();
+    }
+
+    private void notifyBattlePassKitClaim(Player player, String kitType, int level) {
+        try {
+            Class<?> bridge = Class.forName("com.remiaft.skypvpbattlepass.bridge.SkyPVPBattlePassBridge");
+            java.lang.reflect.Method method = bridge.getMethod("notifyKitClaim", java.util.UUID.class, String.class, Integer.TYPE);
+            method.invoke(null, player.getUniqueId(), kitType, Integer.valueOf(level));
+        } catch (Exception ignored) {
+        }
+    }
+
     public CompletableFuture<Boolean> giveKitToPlayer(Player player, String kitType, int level, boolean isPermanent) {
         // 创建礼包数据，价格为0（管理员给予）
         PlayerKitData kitData = new PlayerKitData(
@@ -882,7 +1219,6 @@ public class KitManager {
                 })
                 .exceptionally(throwable -> {
                     plugin.getLogger().severe("管理员给予礼包时数据库操作失败: " + throwable.getMessage());
-                    throwable.printStackTrace();
                     return false;
                 });
     }
@@ -890,6 +1226,25 @@ public class KitManager {
     /**
      * 购买结果类
      */
+    public static class TemporaryGrantResult {
+        private final boolean success;
+        private final boolean granted;
+        private final boolean compensated;
+        private final String message;
+
+        public TemporaryGrantResult(boolean success, boolean granted, boolean compensated, String message) {
+            this.success = success;
+            this.granted = granted;
+            this.compensated = compensated;
+            this.message = message;
+        }
+
+        public boolean isSuccess() { return success; }
+        public boolean isGranted() { return granted; }
+        public boolean isCompensated() { return compensated; }
+        public String getMessage() { return message; }
+    }
+
     public static class PurchaseResult {
         private final boolean success;
         private final String errorCode;
@@ -911,6 +1266,32 @@ public class KitManager {
         public String getErrorCode() { return errorCode; }
         public String getMessage() { return message; }
         public int getAmount() { return amount; }
+    }
+
+    public static class BulkRemoveResult {
+        private final boolean success;
+        private final String errorCode;
+        private final String message;
+        private final int affectedPlayers;
+        private final int deletedRecords;
+        private final List<java.util.UUID> playerUUIDs;
+
+        public BulkRemoveResult(boolean success, String errorCode, String message,
+                                int affectedPlayers, int deletedRecords, List<java.util.UUID> playerUUIDs) {
+            this.success = success;
+            this.errorCode = errorCode;
+            this.message = message;
+            this.affectedPlayers = affectedPlayers;
+            this.deletedRecords = deletedRecords;
+            this.playerUUIDs = playerUUIDs;
+        }
+
+        public boolean isSuccess() { return success; }
+        public String getErrorCode() { return errorCode; }
+        public String getMessage() { return message; }
+        public int getAffectedPlayers() { return affectedPlayers; }
+        public int getDeletedRecords() { return deletedRecords; }
+        public List<java.util.UUID> getPlayerUUIDs() { return playerUUIDs; }
     }
     
     /**
