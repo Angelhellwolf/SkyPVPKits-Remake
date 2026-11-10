@@ -82,6 +82,7 @@ public class DatabaseManager {
     private void createTables() throws SQLException {
         String playerKitsTable;
         String purchaseHistoryTable;
+        String promotionClaimsTable;
         
         if ("sqlite".equals(databaseType)) {
             // SQLite语法
@@ -107,6 +108,15 @@ public class DatabaseManager {
                     "currency TEXT DEFAULT 'POINTS'," +
                     "purchased_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP," +
                     "given_by TEXT NULL" +
+                    ")";
+
+            promotionClaimsTable = "CREATE TABLE IF NOT EXISTS promotion_claims (" +
+                    "player_uuid TEXT NOT NULL," +
+                    "promotion_id TEXT NOT NULL," +
+                    "kit_type TEXT NOT NULL," +
+                    "kit_level INTEGER NOT NULL," +
+                    "last_claim_time TIMESTAMP NOT NULL," +
+                    "PRIMARY KEY (player_uuid, promotion_id, kit_type, kit_level)" +
                     ")";
         } else {
             // MySQL语法
@@ -137,14 +147,25 @@ public class DatabaseManager {
                     "INDEX idx_player_uuid (player_uuid)," +
                     "INDEX idx_purchased_at (purchased_at)" +
                     ")";
+
+            promotionClaimsTable = "CREATE TABLE IF NOT EXISTS promotion_claims (" +
+                    "player_uuid VARCHAR(36) NOT NULL," +
+                    "promotion_id VARCHAR(100) NOT NULL," +
+                    "kit_type VARCHAR(50) NOT NULL," +
+                    "kit_level INT NOT NULL," +
+                    "last_claim_time TIMESTAMP NOT NULL," +
+                    "PRIMARY KEY (player_uuid, promotion_id, kit_type, kit_level)" +
+                    ")";
         }
 
         synchronized (connectionLock) {
             try (PreparedStatement stmt1 = connection.prepareStatement(playerKitsTable);
-                 PreparedStatement stmt2 = connection.prepareStatement(purchaseHistoryTable)) {
+                 PreparedStatement stmt2 = connection.prepareStatement(purchaseHistoryTable);
+                 PreparedStatement stmt3 = connection.prepareStatement(promotionClaimsTable)) {
 
                 stmt1.executeUpdate();
                 stmt2.executeUpdate();
+                stmt3.executeUpdate();
 
                 // 为SQLite创建索引
                 if ("sqlite".equals(databaseType)) {
@@ -324,6 +345,110 @@ public class DatabaseManager {
                 }
             } catch (SQLException e) {
                 plugin.getLogger().log(Level.SEVERE, "保存购买历史时出错:", e);
+            }
+        });
+    }
+
+    /**
+     * 原子记录一次活动礼包领取。活动领取使用独立表，绝不改写 player_kits 或充值流水。
+     */
+    public CompletableFuture<PromotionClaimResult> claimPromotionRewardAsync(
+            UUID playerUuid,
+            String promotionId,
+            String kitType,
+            int level,
+            LocalDateTime gameDayStart,
+            LocalDateTime claimTime) {
+        return CompletableFuture.supplyAsync(() -> {
+            if (connection == null) {
+                return PromotionClaimResult.ERROR;
+            }
+
+            String selectQuery = "SELECT last_claim_time FROM promotion_claims " +
+                    "WHERE player_uuid = ? AND promotion_id = ? AND kit_type = ? AND kit_level = ?";
+            String insertQuery = "INSERT INTO promotion_claims " +
+                    "(player_uuid, promotion_id, kit_type, kit_level, last_claim_time) VALUES (?, ?, ?, ?, ?)";
+            String updateQuery = "UPDATE promotion_claims SET last_claim_time = ? " +
+                    "WHERE player_uuid = ? AND promotion_id = ? AND kit_type = ? AND kit_level = ?";
+
+            try {
+                synchronized (connectionLock) {
+                    boolean existing = false;
+                    try (PreparedStatement select = connection.prepareStatement(selectQuery)) {
+                        bindPromotionKey(select, playerUuid, promotionId, kitType, level, 1);
+                        try (ResultSet result = select.executeQuery()) {
+                            if (result.next()) {
+                                existing = true;
+                                Timestamp lastClaim = result.getTimestamp("last_claim_time");
+                                if (lastClaim != null && !lastClaim.toLocalDateTime().isBefore(gameDayStart)) {
+                                    return PromotionClaimResult.ALREADY_CLAIMED;
+                                }
+                            }
+                        }
+                    }
+
+                    if (existing) {
+                        try (PreparedStatement update = connection.prepareStatement(updateQuery)) {
+                            update.setTimestamp(1, Timestamp.valueOf(claimTime));
+                            bindPromotionKey(update, playerUuid, promotionId, kitType, level, 2);
+                            return update.executeUpdate() == 1
+                                    ? PromotionClaimResult.CLAIMED
+                                    : PromotionClaimResult.ERROR;
+                        }
+                    }
+
+                    try (PreparedStatement insert = connection.prepareStatement(insertQuery)) {
+                        bindPromotionKey(insert, playerUuid, promotionId, kitType, level, 1);
+                        insert.setTimestamp(5, Timestamp.valueOf(claimTime));
+                        return insert.executeUpdate() == 1
+                                ? PromotionClaimResult.CLAIMED
+                                : PromotionClaimResult.ERROR;
+                    }
+                }
+            } catch (SQLException exception) {
+                plugin.getLogger().log(Level.SEVERE, "保存活动礼包领取记录时出错:", exception);
+                return PromotionClaimResult.ERROR;
+            }
+        });
+    }
+
+    private void bindPromotionKey(PreparedStatement statement, UUID playerUuid, String promotionId,
+                                  String kitType, int level, int offset) throws SQLException {
+        statement.setString(offset, playerUuid.toString());
+        statement.setString(offset + 1, promotionId);
+        statement.setString(offset + 2, kitType);
+        statement.setInt(offset + 3, level);
+    }
+
+    public enum PromotionClaimResult {
+        CLAIMED,
+        ALREADY_CLAIMED,
+        ERROR
+    }
+
+    public CompletableFuture<ShopClaimLedger.Reservation> reserveShopRewardAsync(UUID player, String family,
+            int level, String promotion, LocalDateTime dayStart) {
+        return CompletableFuture.supplyAsync(() -> {
+            if (connection == null) return ShopClaimLedger.error();
+            try {
+                synchronized (connectionLock) {
+                    return ShopClaimLedger.reserve(connection, player, family, level, promotion, dayStart, LocalDateTime.now());
+                }
+            } catch (SQLException failure) {
+                plugin.getLogger().warning("Shop claim reservation failed (KIT-DB-01).");
+                return ShopClaimLedger.error();
+            }
+        });
+    }
+
+    public CompletableFuture<Boolean> restoreShopRewardAsync(ShopClaimLedger.Reservation reservation) {
+        return CompletableFuture.supplyAsync(() -> {
+            if (connection == null) return false;
+            try {
+                synchronized (connectionLock) { return ShopClaimLedger.restore(connection, reservation); }
+            } catch (SQLException failure) {
+                plugin.getLogger().warning("Shop claim compensation failed (KIT-DB-02).");
+                return false;
             }
         });
     }

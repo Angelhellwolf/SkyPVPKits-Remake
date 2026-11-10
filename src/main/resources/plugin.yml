@@ -4,7 +4,7 @@ main: com.remiaft.skypvpkits.SkyPVPKits
 authors: [ AngelHell ]
 description: A PVP Kit plugin for SkyPVP server
 depend: [PlaceholderAPI, Vault]
-softdepend: [EZItem, SkyPVPItem]
+softdepend: [EZItem, SkyPVPItem, AngelKits]
 
 commands:
   kits:

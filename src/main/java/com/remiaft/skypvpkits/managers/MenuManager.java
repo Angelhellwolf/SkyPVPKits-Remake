@@ -1,6 +1,7 @@
 package com.remiaft.skypvpkits.managers;
 
 import com.remiaft.skypvpkits.SkyPVPKits;
+import com.remiaft.skypvpkits.bridge.SkyPVPItemBridge;
 import com.remiaft.skypvpkits.data.PlayerKitData;
 import org.bukkit.Bukkit;
 import org.bukkit.Material;
@@ -13,7 +14,6 @@ import org.bukkit.inventory.meta.ItemMeta;
 import org.bukkit.scheduler.BukkitTask;
 
 import java.util.*;
-import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
@@ -389,8 +389,16 @@ public class MenuManager {
         
         // 同步获取玩家最高等级（使用缓存或简化版本）
         try {
+            if (configManager.isNationalDayActive()) {
+                String offer = "moon".equals(kitType) ? "月球 3 免费" : "earth".equals(kitType)
+                        ? "地球 4 限时免费" : "mining".equals(kitType) ? "矿工 3 限时免费" : null;
+                if (offer != null) {
+                    lore.add("§a国庆活动：" + offer);
+                    lore.add("§7截止：§e" + configManager.getNationalDayEndDisplay());
+                    lore.add("§7已拥有可领升级奖励");
+                }
+            }
             // 这里先显示基础信息，点击后再加载详细信息
-            lore.add("§7点击查看详细信息");
             lore.add("");
             lore.add("§e左键 §7查看礼包详情");
         } catch (Exception e) {
@@ -439,6 +447,31 @@ public class MenuManager {
             inventory.setItem(levelSlots[level - 1], levelIcon);
         }
 
+        KitManager.NationalDayReward activity = kitManager.resolveNationalDayReward(kitType, playerData);
+        if (activity != null) {
+            ItemStack offer = new ItemStack(activity.type == KitManager.NationalDayReward.Type.GEMS
+                    ? Material.NETHER_STAR : Material.EXP_BOTTLE);
+            ItemMeta offerMeta = offer.getItemMeta();
+            offerMeta.setDisplayName("§6国庆免费领取");
+            List<String> offerLore = new ArrayList<>();
+            offerLore.add("§a" + (activity.type == KitManager.NationalDayReward.Type.GEMS
+                    ? "完美淬炼宝石 ×5" : configManager.getKitDisplayName(activity.kitType) + " " + activity.level + " · 限时免费"));
+            offerLore.add("§7" + activity.reason);
+            offerLore.add("§7截止：§e" + configManager.getNationalDayEndDisplay());
+            if (activity.type == KitManager.NationalDayReward.Type.GEMS) {
+                offerLore.add("§7整个活动每人共 5 个，仅一次");
+                offerLore.add("§7自动发放；背包满可在商城补领");
+            } else {
+                offerLore.add("§7活动期间每日可领取一次");
+                offerLore.add("§e左键 §7领取今日活动奖励");
+            }
+            offerMeta.setLore(offerLore);
+            offer.setItemMeta(offerMeta);
+            inventory.setItem(40, offer);
+        } else {
+            inventory.setItem(40, null);
+        }
+
         // 返回按钮
         ItemStack backItem = new ItemStack(Material.ARROW);
         ItemMeta backMeta = backItem.getItemMeta();
@@ -462,6 +495,8 @@ public class MenuManager {
                         && data.isPermanent()
                         && !data.isExpired());
         boolean hasTemporaryLevel = hasActiveLevel && !hasPermanentLevel;
+        boolean hasPromotionAccess = kitManager.hasFreeAccessLevel(kitType, level, playerData);
+        boolean isNationalDay = configManager.isNationalDayActive();
         int highestPermanentLevel = playerData.stream()
                 .filter(data -> data.getKitType().equals(kitType) && data.isPermanent() && !data.isExpired())
                 .mapToInt(PlayerKitData::getKitLevel)
@@ -475,6 +510,8 @@ public class MenuManager {
             material = Material.EMERALD_BLOCK;
         } else if (hasTemporaryLevel) {
             material = Material.EMERALD;
+        } else if (hasPromotionAccess) {
+            material = Material.GOLD_BLOCK;
         } else if (hasHigherPermanentLevel) {
             material = Material.BARRIER;
         } else if (missingPreviousPermanent) {
@@ -485,8 +522,9 @@ public class MenuManager {
         ItemStack icon = new ItemStack(material);
         ItemMeta meta = icon.getItemMeta();
         
-        meta.setDisplayName(configManager.getKitDisplayName(kitType) + " §f- §e等级 " + level);
-        
+        meta.setDisplayName(configManager.getKitDisplayName(kitType) + " §f- §e等级 " + level
+                + (hasPromotionAccess ? " §a限时免费" : ""));
+
         List<String> lore = new ArrayList<>();
         
         if (hasPermanentLevel) {
@@ -539,6 +577,31 @@ public class MenuManager {
                 lore.add("§7需要先永久拥有等级 " + (level - 1));
             }
 
+            lore.add("");
+            lore.add("§e左键 §7领取今日奖励");
+            lore.add("§eShift+左键 §7购买当前等级永久版");
+            if (plugin.getKitManager().supportsMonthlyPurchase(kitType, level)) {
+                lore.add("§eShift+右键 §7硬币购买（月付）");
+            }
+            lore.add("§e右键 §7查看装备详情");
+        } else if (hasPromotionAccess) {
+            if (isNationalDay) {
+                if ("moon".equalsIgnoreCase(kitType) && level == 3) {
+                    lore.add("§a★ 国庆活动：月球 3 免费！");
+                } else if ("earth".equalsIgnoreCase(kitType) && level == 4) {
+                    lore.add("§a★ 国庆活动：地球 4 限时免费体验已解锁！");
+                } else if ("mining".equalsIgnoreCase(kitType) && level == 3) {
+                    lore.add("§a★ 国庆活动：矿工 3 限时免费体验已解锁！");
+                } else {
+                    lore.add("§a★ 国庆活动：免费升级！");
+                }
+                lore.add("§7免费截止：§e" + configManager.getNationalDayEndDisplay());
+                lore.add("§7活动期间每日可免费领取一次");
+            } else {
+                lore.add("§6★ 全服免费体验已解锁");
+                lore.add("§7活动结束：§f" + configManager.getAllKitsFreeEndDisplay());
+            }
+            lore.add("§7该权益不会替代永久/月付充值记录");
             lore.add("");
             lore.add("§e左键 §7领取今日奖励");
             lore.add("§eShift+左键 §7购买当前等级永久版");
@@ -603,7 +666,7 @@ public class MenuManager {
             lore.add("§eShift+左键 §7硬币购买（月付）");
             }
         }
-        
+
         meta.setLore(lore);
         meta.addItemFlags(ItemFlag.HIDE_ATTRIBUTES);
         icon.setItemMeta(meta);
@@ -682,6 +745,7 @@ public class MenuManager {
                                 && data.isPermanent()
                                 && !data.isExpired());
                 boolean hasTemporaryLevel = hasActiveLevel && !hasPermanentLevel;
+                boolean hasPromotionAccess = kitManager.hasFreeAccessLevel(kitType, level);
                 int highestPermanentLevel = playerData.stream()
                         .filter(data -> data.getKitType().equals(kitType) && data.isPermanent() && !data.isExpired())
                         .mapToInt(PlayerKitData::getKitLevel)
@@ -702,6 +766,9 @@ public class MenuManager {
                     lore.add("§7状态：§a已永久拥有 §f(｡◕‿◕｡)");
                 } else if (hasTemporaryLevel) {
                     lore.add("§7状态：§e当前为限时/非永久拥有 §f(｡◕‿◕｡)");
+                } else if (hasPromotionAccess) {
+                    lore.add("§7状态：§6全服免费体验 §f(｡◕‿◕｡)");
+                    lore.add("§7结束时间：§f" + configManager.getAllKitsFreeEndDisplay());
                 } else if (hasHigherPermanentLevel) {
                     lore.add("§7状态：§e已永久拥有更高等级 Lv." + highestPermanentLevel + " §f(｡◕‿◕｡)");
                 } else if (missingPreviousPermanent) {
@@ -723,9 +790,11 @@ public class MenuManager {
                     lore.add("§7购买状态：");
                     lore.add("  §e你已永久拥有更高等级礼包");
                     lore.add("  §7当前等级无需重复购买");
-                } else if (hasTemporaryLevel) {
+                } else if (hasTemporaryLevel || hasPromotionAccess) {
                     lore.add("§7购买状态：");
-                    lore.add("  §e当前仅为限时/非永久拥有");
+                    lore.add(hasPromotionAccess
+                            ? "  §6当前由全服免费体验临时解锁"
+                            : "  §e当前仅为限时/非永久拥有");
                     lore.add("  §7如需作为升级前置，必须购买本级永久版");
                 } else if (missingPreviousPermanent) {
                     lore.add("§7购买状态：");
@@ -781,6 +850,11 @@ public class MenuManager {
         String[] equipTypes = {"剑", "头盔", "胸甲", "护腿", "鞋子"};
 
         List<ItemStack> rewardItems = getMenuPreviewItems(kitType, level);
+
+        if (plugin.getAngelRewards() != null) {
+            for (int i = 0; i < Math.min(previewSlots.length, rewardItems.size()); i++) inventory.setItem(previewSlots[i], rewardItems.get(i).clone());
+            return;
+        }
 
         if (!rewardItems.isEmpty()) {
             for (int i = 0; i < Math.min(previewSlots.length, rewardItems.size()); i++) {
@@ -870,13 +944,11 @@ public class MenuManager {
      */
     public void openItemDisplayMenu(Player player, String kitType, int level) {
         // 挖矿礼包不显示物品详情，只显示功能说明
-        if (kitType.equals("mining")) {
+        if (kitType.equals("mining") && plugin.getAngelRewards() == null) {
             displayMiningKitInfo(player, level);
             return;
         }
-        
 
-        
         String kitName = configManager.getKitDisplayName(kitType);
         String title = "§8装备展示 §7- " + kitName + " §e等级" + level;
         
@@ -884,20 +956,10 @@ public class MenuManager {
         
         // 填充背景
         fillItemDisplayBackground(inventory);
-        
-        // 异步加载物品信息
-        kitManager.getPlayerKitDataAsync(player).thenAccept(playerData -> {
-            // 在主线程中更新界面
-            plugin.getServer().getScheduler().runTask(plugin, () -> {
-                loadItemsFromConfig(inventory, player, kitType, level);
-                // 如果玩家仍在线且界面有效，则更新
-                if (player.isOnline() && player.getOpenInventory() != null) {
-                    player.openInventory(inventory);
-                }
-            });
-        });
-        
-        // 立即打开空白界面，避免等待
+
+        // 物品展示不依赖玩家数据库数据。模板已在插件启用阶段预热，此处只克隆缓存，
+        // 因而可以在当前主线程一次性完成并只打开一次背包。
+        loadItemsFromConfig(inventory, player, kitType, level);
         player.openInventory(inventory);
     }
     
@@ -1108,6 +1170,8 @@ public class MenuManager {
     }
 
     private int[] getItemDisplaySlots(String kitType) {
+        if (plugin.getAngelRewards() != null && !"zxgy".equals(kitType) && !"ywxc".equals(kitType))
+            return new int[] {10,11,12,13,14,15,16,19,20,21,22,23,24,25,28,29,30,31,32,33,34,37,38,39,40,41,42,43};
         if ("zxgy".equals(kitType) || "ywxc".equals(kitType)) {
             return new int[] {20, 11, 12, 21, 29, 30};
         }
@@ -1115,6 +1179,17 @@ public class MenuManager {
     }
 
     private List<ItemStack> getMenuPreviewItems(String kitType, int level) {
+        if (plugin.getAngelRewards() != null) {
+            try {
+                if ("zxgy".equals(kitType) || "ywxc".equals(kitType)) return SkyPVPItemBridge.previewSet(kitType);
+                return plugin.getAngelRewards().preview(kitType, level);
+            }
+            catch (RuntimeException failure) {
+                ItemStack unavailable = new ItemStack(Material.BARRIER);
+                ItemMeta meta = unavailable.getItemMeta(); meta.setDisplayName("\u00a7c\u6682\u4e0d\u53ef\u7528"); unavailable.setItemMeta(meta);
+                return Collections.singletonList(unavailable);
+            }
+        }
         if ("zxgy".equals(kitType)) {
             return createZxgyPreviewItems();
         }
