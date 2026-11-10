@@ -3,9 +3,19 @@ package com.remiaft.skypvpkits.managers;
 import com.remiaft.skypvpkits.SkyPVPKits;
 import org.bukkit.configuration.file.FileConfiguration;
 
+import java.time.DateTimeException;
+import java.time.Instant;
+import java.time.LocalDateTime;
+import java.time.ZoneId;
+import java.time.ZonedDateTime;
+import java.time.format.DateTimeFormatter;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
+import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Locale;
+import java.util.Set;
 
 /**
  * 配置管理器
@@ -33,10 +43,22 @@ public class ConfigManager {
     
     private final SkyPVPKits plugin;
     private FileConfiguration config;
+    private boolean allKitsFreeEnabled;
+    private Instant allKitsFreeStartsAt;
+    private Instant allKitsFreeEndsAt;
+    private ZoneId allKitsFreeZone;
+    private Set<String> allKitsFreeExcludedKits = Collections.emptySet();
+    private boolean nationalDayEnabled;
+    private Instant nationalDayStartsAt;
+    private Instant nationalDayEndsAt;
+    private ZoneId nationalDayZone;
+    private String nationalDayPromotionId = "national-day-2026";
     
     public ConfigManager(SkyPVPKits plugin) {
         this.plugin = plugin;
         this.config = plugin.getConfig();
+        loadAllKitsFreePromotion();
+        loadNationalDayPromotion();
     }
     
     /**
@@ -45,6 +67,8 @@ public class ConfigManager {
     public void reload() {
         plugin.reloadConfig();
         this.config = plugin.getConfig();
+        loadAllKitsFreePromotion();
+        loadNationalDayPromotion();
     }
     
     /**
@@ -130,9 +154,6 @@ public class ConfigManager {
      * 获取礼包配置
      */
     public boolean isKitEnabled(String kitType) {
-        if (isBuiltInKit(kitType)) {
-            return true;
-        }
         return config.getBoolean("kits." + kitType + ".enabled", true);
     }
     
@@ -221,11 +242,193 @@ public class ConfigManager {
         return config.getBoolean("kits." + kitType + ".support_monthly", true);
     }
 
+    /**
+     * 全服免费体验是一个虚拟权益，不会写入或覆盖玩家的充值礼包数据。
+     * 仅每种礼包的最高等级参与体验，保持原有“高等级覆盖低等级”的领取规则。
+     */
+    public boolean isAllKitsFreeLevel(String kitType, int level) {
+        return kitType != null
+                && isAllKitsFreeActive()
+                && isKitEnabled(kitType)
+                && !allKitsFreeExcludedKits.contains(kitType.toLowerCase(Locale.ROOT))
+                && level == getKitLevels(kitType);
+    }
+
+    public boolean isAllKitsFreeKitEligible(String kitType) {
+        return kitType != null
+                && isAllKitsFreeActive()
+                && isKitEnabled(kitType)
+                && !allKitsFreeExcludedKits.contains(kitType.toLowerCase(Locale.ROOT));
+    }
+
+    public boolean isAllKitsFreeActive() {
+        if (!allKitsFreeEnabled || allKitsFreeStartsAt == null || allKitsFreeEndsAt == null) {
+            return false;
+        }
+        Instant now = Instant.now();
+        return !now.isBefore(allKitsFreeStartsAt) && now.isBefore(allKitsFreeEndsAt);
+    }
+
+    public String getAllKitsFreePromotionId() {
+        return config.getString("promotions.all_kits_free.id", "all-kits-free");
+    }
+
+    public String getAllKitsFreeEndDisplay() {
+        if (allKitsFreeEndsAt == null || allKitsFreeZone == null) {
+            return "未知";
+        }
+        return DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm")
+                .format(ZonedDateTime.ofInstant(allKitsFreeEndsAt, allKitsFreeZone));
+    }
+
+    public long getAllKitsFreeEndEpochMillis() {
+        return allKitsFreeEndsAt == null ? -1L : allKitsFreeEndsAt.toEpochMilli();
+    }
+
+    public String getAllKitsFreeZoneId() {
+        return allKitsFreeZone == null ? "Asia/Hong_Kong" : allKitsFreeZone.getId();
+    }
+
+    public String getAllKitsFreeExcludedKitsDisplay() {
+        return allKitsFreeExcludedKits.isEmpty()
+                ? "无"
+                : String.join(", ", allKitsFreeExcludedKits);
+    }
+
+    public int getDailyResetHour() {
+        int hour = config.getInt("system.daily_reset_hour", 4);
+        return Math.max(0, Math.min(23, hour));
+    }
+
+    private void loadAllKitsFreePromotion() {
+        allKitsFreeEnabled = config.getBoolean("promotions.all_kits_free.enabled", false);
+        allKitsFreeStartsAt = null;
+        allKitsFreeEndsAt = null;
+        LinkedHashSet<String> excludedKits = new LinkedHashSet<>();
+        String excludedKitsPath = "promotions.all_kits_free.excluded_kits";
+        List<String> configuredExcludedKits = config.contains(excludedKitsPath)
+                ? config.getStringList(excludedKitsPath)
+                : Arrays.asList("sun", "galaxy");
+        for (String kitType : configuredExcludedKits) {
+            if (kitType != null && !kitType.trim().isEmpty()) {
+                excludedKits.add(kitType.trim().toLowerCase(Locale.ROOT));
+            }
+        }
+        allKitsFreeExcludedKits = Collections.unmodifiableSet(excludedKits);
+
+        String zoneName = config.getString("promotions.all_kits_free.timezone", "Asia/Hong_Kong");
+        String startsAt = config.getString("promotions.all_kits_free.starts_at", "");
+        String endsAt = config.getString("promotions.all_kits_free.ends_at", "");
+        try {
+            allKitsFreeZone = ZoneId.of(zoneName);
+            allKitsFreeStartsAt = LocalDateTime.parse(startsAt).atZone(allKitsFreeZone).toInstant();
+            allKitsFreeEndsAt = LocalDateTime.parse(endsAt).atZone(allKitsFreeZone).toInstant();
+            if (!allKitsFreeEndsAt.isAfter(allKitsFreeStartsAt)) {
+                throw new DateTimeException("结束时间必须晚于开始时间");
+            }
+        } catch (DateTimeException exception) {
+            allKitsFreeEnabled = false;
+            allKitsFreeZone = ZoneId.of("Asia/Hong_Kong");
+            if (config.getBoolean("promotions.all_kits_free.enabled", false)) {
+                plugin.getLogger().warning("全服礼包免费体验时间配置无效，活动已停用: " + exception.getMessage());
+            }
+        }
+    }
+
+    public boolean isNationalDayActive() {
+        if (!nationalDayEnabled || nationalDayStartsAt == null || nationalDayEndsAt == null) {
+            return false;
+        }
+        return isNationalDayActive(Instant.now());
+    }
+
+    public boolean isNationalDayActive(Instant now) {
+        if (!nationalDayEnabled || nationalDayStartsAt == null || nationalDayEndsAt == null) return false;
+        return !now.isBefore(nationalDayStartsAt) && now.isBefore(nationalDayEndsAt);
+    }
+
+    public String getNationalDayEndDisplay() {
+        if (nationalDayEndsAt == null || nationalDayZone == null) {
+            return "2026-10-07 23:59";
+        }
+        return DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm")
+                .format(ZonedDateTime.ofInstant(nationalDayEndsAt.minusSeconds(1), nationalDayZone));
+    }
+
+    public long getNationalDayEndEpochMillis() {
+        return nationalDayEndsAt == null ? -1L : nationalDayEndsAt.toEpochMilli();
+    }
+
+    public String getNationalDayZoneId() {
+        return nationalDayZone == null ? "Asia/Hong_Kong" : nationalDayZone.getId();
+    }
+
+    public String getNationalDayPromotionId() {
+        return nationalDayPromotionId;
+    }
+
+    public boolean isNationalDayBaseKit(String kitType, int level) {
+        if (!isNationalDayActive() || kitType == null) return false;
+        String k = kitType.toLowerCase(Locale.ROOT);
+        return ("moon".equals(k) && level == 3)
+                || ("earth".equals(k) && level == 4)
+                || ("mining".equals(k) && level == 3);
+    }
+
+    private void loadNationalDayPromotion() {
+        nationalDayEnabled = config.getBoolean("promotions.national_day_2026.enabled", true);
+        nationalDayStartsAt = null;
+        nationalDayEndsAt = null;
+        nationalDayPromotionId = config.getString("promotions.national_day_2026.id", "national-day-2026");
+        String zoneName = config.getString("promotions.national_day_2026.timezone", "Asia/Hong_Kong");
+        String startsAt = config.getString("promotions.national_day_2026.starts_at", "2026-10-01T00:00:00");
+        String endsAt = config.getString("promotions.national_day_2026.ends_at", "2026-10-08T00:00:00");
+        try {
+            nationalDayZone = ZoneId.of(zoneName);
+            nationalDayStartsAt = LocalDateTime.parse(startsAt).atZone(nationalDayZone).toInstant();
+            nationalDayEndsAt = LocalDateTime.parse(endsAt).atZone(nationalDayZone).toInstant();
+            if (!nationalDayEndsAt.isAfter(nationalDayStartsAt)) {
+                throw new DateTimeException("结束时间必须晚于开始时间");
+            }
+        } catch (DateTimeException exception) {
+            nationalDayEnabled = false;
+            nationalDayZone = ZoneId.of("Asia/Hong_Kong");
+            if (config.getBoolean("promotions.national_day_2026.enabled", true)) {
+                plugin.getLogger().warning("国庆礼包免费体验时间配置无效，活动已停用: " + exception.getMessage());
+            }
+        }
+    }
+
     public List<String> getKitRewardItems(String kitType, int level) {
         if (isBuiltInKit(kitType)) {
             return Collections.emptyList();
         }
         return config.getStringList("kit_rewards." + kitType + "." + level + ".items");
+    }
+
+    /**
+     * 返回当前配置实际引用的所有 EZItem 模板。
+     *
+     * 菜单预览会频繁读取这些模板。集中收集后可在插件启用阶段完成一次反序列化，
+     * 避免玩家第一次打开装备预览时在主线程触发昂贵的冷加载。
+     */
+    public List<String> getAllKitRewardItems() {
+        Set<String> itemKeys = new LinkedHashSet<>();
+        for (String kitType : KitManager.KIT_TYPES) {
+            int levels = getKitLevels(kitType);
+            for (int level = 1; level <= levels; level++) {
+                for (String itemKey : getKitRewardItems(kitType, level)) {
+                    if (itemKey == null) {
+                        continue;
+                    }
+                    String normalizedKey = itemKey.trim();
+                    if (!normalizedKey.isEmpty()) {
+                        itemKeys.add(normalizedKey);
+                    }
+                }
+            }
+        }
+        return new ArrayList<>(itemKeys);
     }
 
     private boolean isBuiltInKit(String kitType) {

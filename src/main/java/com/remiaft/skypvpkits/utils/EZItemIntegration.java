@@ -134,6 +134,39 @@ public class EZItemIntegration {
     }
 
     /**
+     * 在没有玩家在线交互的启用/重载阶段预热模板缓存。
+     *
+     * EZItem 的模板首次读取包含 Bukkit ItemStack 反序列化。把这一步留到菜单回调中
+     * 会直接占用服务器主线程，并可能造成接近一秒的停顿。
+     *
+     * @param templateNames 要预热的模板名称
+     * @return 成功放入缓存的模板数量
+     */
+    public int preloadTemplates(Iterable<String> templateNames) {
+        if (!isEZItemEnabled() || templateNames == null) {
+            return 0;
+        }
+
+        int loaded = 0;
+        for (String templateName : templateNames) {
+            if (templateName == null) {
+                continue;
+            }
+
+            String normalizedTemplateName = templateName.trim();
+            if (normalizedTemplateName.isEmpty()) {
+                continue;
+            }
+
+            boolean alreadyCached = templateCache.containsKey(normalizedTemplateName);
+            if (getItemByTemplate(normalizedTemplateName) != null && !alreadyCached) {
+                loaded++;
+            }
+        }
+        return loaded;
+    }
+
+    /**
      * 通过模板名称直接发放物品给玩家
      * 由EZItem负责写入过期时间、绑定和扩展标记
      *

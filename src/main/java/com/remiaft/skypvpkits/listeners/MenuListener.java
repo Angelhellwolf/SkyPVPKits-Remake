@@ -82,6 +82,7 @@ public class MenuListener implements Listener {
         
         // 取消默认点击行为
         event.setCancelled(true);
+        if (event.getRawSlot() < 0 || event.getRawSlot() >= event.getInventory().getSize()) return;
         
         // 检测各种点击状态
         boolean isShiftClick = event.isShiftClick();
@@ -184,6 +185,16 @@ public class MenuListener implements Listener {
             return;
         }
         
+        if (displayName.equals("§6国庆免费领取")) {
+            kitManager.claimNationalDayReward(player, kitType).whenComplete((result, error) ->
+                plugin.getServer().getScheduler().runTask(plugin, () -> {
+                    if (error != null) player.sendMessage("§c活动奖励暂不可用，请稍后重试");
+                    else player.sendMessage((result.isSuccess() ? "§a" : "§c") + result.getMessage());
+                    refreshMenu(player, kitType);
+                }));
+            return;
+        }
+
         int level = extractLevelFromDisplayName(displayName);
         if (level <= 0) {
             return;
@@ -193,6 +204,7 @@ public class MenuListener implements Listener {
         Material itemType = clickedItem.getType();
         boolean isPermanentOwnedKit = itemType == Material.EMERALD_BLOCK;
         boolean isTemporaryOwnedKit = itemType == Material.EMERALD;
+        boolean isPromotionKit = itemType == Material.GOLD_BLOCK;
         boolean isBlockedByHigherLevel = itemType == Material.BARRIER;
         boolean isLockedByPreviousPermanent = itemType == Material.COAL_BLOCK;
         boolean isUnownedKit = (itemType == Material.REDSTONE_BLOCK || itemType == Material.REDSTONE);
@@ -203,6 +215,18 @@ public class MenuListener implements Listener {
         } else if (isTemporaryOwnedKit) {
             if (isShiftClick && isLeftClick) {
                 purchaseKitPermanent(player, kitType, level);
+            } else if (isRightClick || isMiddleClick) {
+                menuManager.openItemDisplayMenu(player, kitType, level);
+            } else {
+                claimKitReward(player, kitType, level);
+            }
+        } else if (isPromotionKit) {
+            if (isShiftClick && isLeftClick) {
+                // 活动权益与充值完全分离，玩家仍可正常购买永久版。
+                purchaseKitPermanent(player, kitType, level);
+            } else if (isShiftClick && isRightClick) {
+                // 月付入口同样保留，活动不会占用或延长真实订阅。
+                purchaseKitMonthlyWithCoins(player, kitType, level);
             } else if (isRightClick || isMiddleClick) {
                 menuManager.openItemDisplayMenu(player, kitType, level);
             } else {

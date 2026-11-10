@@ -2,6 +2,7 @@ package com.remiaft.skypvpkits.managers;
 
 import com.remiaft.skypvpkits.SkyPVPKits;
 import com.remiaft.skypvpkits.bridge.SkyPVPItemBridge;
+import com.remiaft.skypvpkits.bridge.AngelRewardsBridge;
 import com.remiaft.skypvpkits.data.PlayerKitData;
 import me.clip.placeholderapi.PlaceholderAPI;
 import net.milkbowl.vault.economy.Economy;
@@ -21,7 +22,9 @@ import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
+import java.util.UUID;
 import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicInteger;
 
@@ -45,6 +48,7 @@ public class KitManager {
     // 玩家礼包缓存
     private final Map<String, CachedKitData> playerKitCache = new ConcurrentHashMap<>();
     private final Map<String, List<ItemStack>> rewardTemplateCache = new ConcurrentHashMap<>();
+    private final java.util.Set<UUID> activeShopClaims = ConcurrentHashMap.newKeySet();
     private static final long CACHE_EXPIRE_MS = 60 * 1000; // 缓存60秒过期
 
     private static class CachedKitData {
@@ -199,9 +203,9 @@ public class KitManager {
      */
     public CompletableFuture<Boolean> hasKitLevel(Player player, String kitType, int level) {
         return getPlayerKitDataAsync(player).thenApply(dataList -> {
-            return dataList.stream()
-                    .anyMatch(data -> data.getKitType().equals(kitType) 
-                                   && data.getKitLevel() == level 
+            return hasFreeAccessLevel(kitType, level, dataList) || dataList.stream()
+                    .anyMatch(data -> data.getKitType().equals(kitType)
+                                   && data.getKitLevel() == level
                                    && !data.isExpired());
         });
     }
@@ -211,11 +215,126 @@ public class KitManager {
      */
     public CompletableFuture<Boolean> hasKitLevelByUUID(java.util.UUID playerUUID, String kitType, int level) {
         return plugin.getDatabaseManager().getPlayerKitDataAsync(playerUUID).thenApply(dataList -> {
-            return dataList.stream()
-                    .anyMatch(data -> data.getKitType().equals(kitType) 
-                                   && data.getKitLevel() == level 
+            return hasFreeAccessLevel(kitType, level, dataList) || dataList.stream()
+                    .anyMatch(data -> data.getKitType().equals(kitType)
+                                   && data.getKitLevel() == level
                                    && !data.isExpired());
         });
+    }
+
+    public static final class NationalDayReward {
+        public enum Type { KIT, GEMS }
+        public final Type type;
+        public final String kitType;
+        public final int level;
+        public final int gemAmount;
+        public final String reason;
+
+        public NationalDayReward(Type type, String kitType, int level, int gemAmount, String reason) {
+            this.type = type;
+            this.kitType = kitType;
+            this.level = level;
+            this.gemAmount = gemAmount;
+            this.reason = reason;
+        }
+    }
+
+    public NationalDayReward resolveNationalDayReward(String baseKit, List<PlayerKitData> playerData) {
+        if (!configManager.isNationalDayActive() || baseKit == null || !configManager.isKitEnabled(baseKit)) return null;
+        return nationalDayReward(baseKit, getMaxOwnedLevel(playerData, baseKit),
+                configManager.getKitLevels(baseKit), getMaxOwnedLevel(playerData, "galaxy"));
+    }
+
+    /** Only real, unexpired ownership is supplied here; activity access never advances itself. */
+    public static NationalDayReward nationalDayReward(String baseKit, int ownedLevel, int maxLevel, int galaxyOwned) {
+        if (baseKit == null) return null;
+        String family = baseKit.toLowerCase(Locale.ROOT);
+        if (!Arrays.asList("moon", "earth", "mining").contains(family)) return null;
+        int baseLevel = "earth".equals(family) ? 4 : 3;
+        if (maxLevel < baseLevel) return null;
+        if (ownedLevel < baseLevel)
+            return new NationalDayReward(NationalDayReward.Type.KIT, family, baseLevel, 0, "国庆限时免费");
+        if (ownedLevel < maxLevel)
+            return new NationalDayReward(NationalDayReward.Type.KIT, family, baseLevel + 1, 0, "已拥有基础等级，免费升级");
+        if (galaxyOwned < 3)
+            return new NationalDayReward(NationalDayReward.Type.KIT, "galaxy", 3, 0, "已拥有最高等级，免费领取银河 3");
+        return new NationalDayReward(NationalDayReward.Type.GEMS, family, 0, 5, "已拥有银河 3，赠送完美淬炼宝石 ×5");
+    }
+
+    public boolean hasFreeAccessLevel(String kitType, int level, List<PlayerKitData> playerData) {
+        if (configManager.isAllKitsFreeLevel(kitType, level)) {
+            return true;
+        }
+        if (configManager.isNationalDayActive() && playerData != null) {
+            for (String base : Arrays.asList("moon", "earth", "mining")) {
+                NationalDayReward reward = resolveNationalDayReward(base, playerData);
+                if (reward != null && reward.type == NationalDayReward.Type.KIT
+                        && reward.kitType.equalsIgnoreCase(kitType) && reward.level == level) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    public boolean hasFreeAccessLevel(String kitType, int level) {
+        return configManager.isAllKitsFreeLevel(kitType, level);
+    }
+
+    public CompletableFuture<ClaimResult> claimNationalDayReward(Player player, String baseFamily) {
+        return plugin.getDatabaseManager().getPlayerKitDataAsync(player.getUniqueId()).thenCompose(data -> {
+            NationalDayReward reward = resolveNationalDayReward(baseFamily, data);
+            if (reward == null) return CompletableFuture.completedFuture(
+                    new ClaimResult(false, "promotion_ended", "国庆活动尚未开始或已结束"));
+            if (reward.type == NationalDayReward.Type.GEMS) return claimNationalDayGems(player, baseFamily);
+            playerKitCache.remove(player.getUniqueId().toString());
+            return claimKitReward(player, reward.kitType, reward.level);
+        });
+    }
+
+    private final java.util.Set<UUID> nationalDayGemsRecorded = ConcurrentHashMap.newKeySet();
+    private final java.util.Set<UUID> nationalDayGemsChecking = ConcurrentHashMap.newKeySet();
+
+    /** Automatically records one shared reward per player, including players online at activity start. */
+    public void checkNationalDayGems(Player player) {
+        if (!configManager.isNationalDayActive() || nationalDayGemsRecorded.contains(player.getUniqueId())
+                || !nationalDayGemsChecking.add(player.getUniqueId())) return;
+        plugin.getDatabaseManager().getPlayerKitDataAsync(player.getUniqueId()).thenCompose(data -> {
+            for (String family : Arrays.asList("moon", "earth", "mining")) {
+                NationalDayReward reward = resolveNationalDayReward(family, data);
+                if (reward != null && reward.type == NationalDayReward.Type.GEMS)
+                    return claimNationalDayGems(player, family);
+            }
+            return CompletableFuture.completedFuture(new ClaimResult(false, "not_eligible", ""));
+        }).whenComplete((result, error) -> {
+            if (error == null && result.isSuccess()) nationalDayGemsRecorded.add(player.getUniqueId());
+            nationalDayGemsChecking.remove(player.getUniqueId());
+        });
+    }
+
+    public CompletableFuture<ClaimResult> claimNationalDayGems(Player player, String baseFamily) {
+        // Eligibility is re-read from paid entitlements; the menu icon is never authority.
+        return plugin.getDatabaseManager().getPlayerKitDataAsync(player.getUniqueId()).thenCompose(data -> {
+            NationalDayReward reward = resolveNationalDayReward(baseFamily, data);
+            if (reward == null || reward.type != NationalDayReward.Type.GEMS)
+                return CompletableFuture.completedFuture(new ClaimResult(false, "not_eligible", "未满足国庆宝石奖励条件"));
+            return onServerThread(() -> {
+                if (!configManager.isNationalDayActive()) throw new IllegalStateException("Activity ended");
+                org.bukkit.plugin.Plugin forge = Bukkit.getPluginManager().getPlugin("RemiaftSkyForge");
+                if (forge == null || !forge.isEnabled()) throw new IllegalStateException("SkyForge unavailable");
+                @SuppressWarnings("unchecked")
+                CompletableFuture<String> grant = (CompletableFuture<String>) forge.getClass()
+                        .getMethod("grantNationalDayGems", Player.class).invoke(forge, player);
+                return grant;
+            }).thenCompose(grant -> grant).thenApply(state -> {
+                boolean success = !"BUSY".equals(state);
+                if (success) nationalDayGemsRecorded.add(player.getUniqueId());
+                return new ClaimResult(success, success ? "success" : "busy", "DONE".equals(state)
+                        ? "本次国庆的 5 个完美宝石已领取，每人仅一次"
+                        : success ? "5 个完美宝石已登记，背包满或离线时可在点券商城的待领取奖励中补领"
+                        : "奖励正在处理，请稍后再试");
+            });
+        }).exceptionally(error -> new ClaimResult(false, "delivery_failed", "宝石奖励暂不可用，请稍后重试"));
     }
 
     private int getMaxOwnedLevel(List<PlayerKitData> dataList, String kitType) {
@@ -284,7 +403,11 @@ public class KitManager {
      */
     public CompletableFuture<Integer> getPlayerMaxLevel(Player player, String kitType) {
         return getPlayerKitDataAsync(player).thenApply(dataList -> {
-            return getMaxOwnedLevel(dataList, kitType);
+            int ownedLevel = getMaxOwnedLevel(dataList, kitType);
+            if (configManager.isAllKitsFreeKitEligible(kitType)) {
+                return Math.max(ownedLevel, configManager.getKitLevels(kitType));
+            }
+            return ownedLevel;
         });
     }
     
@@ -414,7 +537,13 @@ public class KitManager {
      * 领取礼包奖励
      */
     public CompletableFuture<ClaimResult> claimKitReward(Player player, String kitType, int level) {
+        if (!KIT_TYPES.contains(kitType) || !configManager.isKitEnabled(kitType))
+            return CompletableFuture.completedFuture(new ClaimResult(false, "kit_not_found", "\u793c\u5305\u672a\u542f\u7528"));
         String playerKey = player.getUniqueId().toString();
+        final AngelRewardsBridge angel = plugin.getAngelRewards();
+        final boolean useAngel = angel != null && !requiresSkyPVPItem(kitType);
+        if (useAngel && !activeShopClaims.add(player.getUniqueId()))
+            return CompletableFuture.completedFuture(new ClaimResult(false, "busy", "\u8bf7\u7b49\u5f85\u672c\u6b21\u9886\u53d6\u5b8c\u6210"));
 
         if (requiresSkyPVPItem(kitType) && !SkyPVPItemBridge.isAvailable()) {
             return CompletableFuture.completedFuture(
@@ -423,6 +552,7 @@ public class KitManager {
         }
 
         if (!canProcessOperation(playerKey)) {
+            if (useAngel) activeShopClaims.remove(player.getUniqueId());
             return CompletableFuture.completedFuture(new ClaimResult(false, "busy", "服务器繁忙，请稍后再试"));
         }
 
@@ -430,11 +560,14 @@ public class KitManager {
 
         return getPlayerKitDataAsync(player)
                 .thenCompose(dataList -> {
-                    boolean hasKit = dataList.stream()
-                            .anyMatch(data -> data.getKitType().equals(kitType)
+                    PlayerKitData ownedKitData = dataList.stream()
+                            .filter(data -> data.getKitType().equals(kitType)
                                     && data.getKitLevel() == level
-                                    && !data.isExpired());
-                    if (!hasKit) {
+                                    && !data.isExpired())
+                            .findFirst()
+                            .orElse(null);
+                    boolean hasPromotionAccess = hasFreeAccessLevel(kitType, level, dataList);
+                    if (ownedKitData == null && !hasPromotionAccess) {
                         return CompletableFuture.completedFuture(new ClaimResult(false, "not_owned", "你还没有购买这个礼包"));
                     }
 
@@ -445,7 +578,11 @@ public class KitManager {
                             .max()
                             .orElse(0);
 
-                    if (maxLevel > level) {
+                    if (configManager.isAllKitsFreeKitEligible(kitType)) {
+                        maxLevel = Math.max(maxLevel, configManager.getKitLevels(kitType));
+                    }
+
+                    if (maxLevel > level && !hasPromotionAccess) {
                         return CompletableFuture.completedFuture(new ClaimResult(
                                 false,
                                 "higher_level_owned",
@@ -453,24 +590,15 @@ public class KitManager {
                         ));
                     }
 
-                    PlayerKitData kitData = dataList.stream()
-                            .filter(data -> data.getKitType().equals(kitType)
-                                    && data.getKitLevel() == level
-                                    && !data.isExpired())
-                            .findFirst()
-                            .orElse(null);
+                    if (useAngel) return claimAngelRewards(player, kitType, level, ownedKitData == null, angel);
 
-                    if (kitData == null) {
-                        return CompletableFuture.completedFuture(new ClaimResult(false, "not_found", "礼包数据未找到"));
-                    }
+                    if (ownedKitData != null) {
+                        if (ownedKitData.hasClaimedToday()) {
+                            return CompletableFuture.completedFuture(new ClaimResult(false, "already_claimed", "今天已经领取过了"));
+                        }
 
-                    if (kitData.hasClaimedToday()) {
-                        return CompletableFuture.completedFuture(new ClaimResult(false, "already_claimed", "今天已经领取过了"));
-                    }
-
-                    kitData.markClaimedToday();
-
-                    return plugin.getDatabaseManager().savePlayerKitDataAsync(kitData)
+                        ownedKitData.markClaimedToday();
+                        return plugin.getDatabaseManager().savePlayerKitDataAsync(ownedKitData)
                             .thenApply(saved -> {
                                 if (!saved) {
                                     return new ClaimResult(false, "database_error", "数据库错误");
@@ -480,12 +608,140 @@ public class KitManager {
                                 playerKitCache.remove(playerKey);
                                 return new ClaimResult(true, "success", "领取成功");
                             });
+                    }
+
+                    if (!SkyPVPItemBridge.supportsActivityExpiry()) {
+                        return CompletableFuture.completedFuture(new ClaimResult(
+                                false,
+                                "dependency_missing",
+                                "SkyPVPItem 活动物品时效接口不可用"
+                        ));
+                    }
+
+                    final long promotionEndsAtMillis = configManager.getAllKitsFreeEndEpochMillis();
+                    final String promotionId = configManager.getAllKitsFreePromotionId();
+                    final String promotionZoneId = configManager.getAllKitsFreeZoneId();
+                    if (promotionEndsAtMillis <= System.currentTimeMillis()) {
+                        return CompletableFuture.completedFuture(new ClaimResult(
+                                false,
+                                "promotion_ended",
+                                "全服免费体验活动已结束"
+                        ));
+                    }
+
+                    LocalDateTime claimTime = LocalDateTime.now();
+                    LocalDateTime gameDayStart = getGameDayStart(claimTime);
+                    return plugin.getDatabaseManager().claimPromotionRewardAsync(
+                                    player.getUniqueId(),
+                                    promotionId,
+                                    kitType,
+                                    level,
+                                    gameDayStart,
+                                    claimTime)
+                            .thenApply(result -> {
+                                if (result == DatabaseManager.PromotionClaimResult.ALREADY_CLAIMED) {
+                                    return new ClaimResult(false, "already_claimed", "今天已经领取过了");
+                                }
+                                if (result != DatabaseManager.PromotionClaimResult.CLAIMED) {
+                                    return new ClaimResult(false, "database_error", "数据库错误");
+                                }
+                                if (!configManager.isAllKitsFreeLevel(kitType, level)
+                                        || promotionEndsAtMillis <= System.currentTimeMillis()) {
+                                    return new ClaimResult(false, "promotion_ended", "全服免费体验活动已结束");
+                                }
+                                plugin.getServer().getScheduler().runTask(plugin,
+                                        () -> executePromotionKitRewards(
+                                                player,
+                                                kitType,
+                                                level,
+                                                promotionId,
+                                                promotionEndsAtMillis,
+                                                promotionZoneId));
+                                return new ClaimResult(true, "success", "领取成功");
+                            });
                 })
                 .exceptionally(throwable -> {
                     plugin.getLogger().warning("领取礼包奖励失败: " + throwable.getMessage());
                     return new ClaimResult(false, "error", "处理过程中发生错误");
                 })
-                .whenComplete((result, throwable) -> endOperation(playerKey));
+                .whenComplete((result, throwable) -> {
+                    if (useAngel) activeShopClaims.remove(player.getUniqueId());
+                    endOperation(playerKey);
+                });
+    }
+
+    private CompletableFuture<ClaimResult> claimAngelRewards(Player player, String family, int level,
+            boolean activity, AngelRewardsBridge provider) {
+        boolean isNationalDay = configManager.isNationalDayActive();
+        final long deadline = activity ? (isNationalDay ? configManager.getNationalDayEndEpochMillis() : configManager.getAllKitsFreeEndEpochMillis()) : 0;
+        final String promotion = activity ? (isNationalDay ? configManager.getNationalDayPromotionId() : configManager.getAllKitsFreePromotionId()) : null;
+        final String zone = isNationalDay ? configManager.getNationalDayZoneId() : configManager.getAllKitsFreeZoneId();
+        return onServerThread(() -> {
+            List<ItemStack> rewards = provider.prepare(family, level, deadline, zone);
+            provider.validate(player, rewards);
+            return rewards;
+        }).thenCompose(rewards -> plugin.getDatabaseManager().reserveShopRewardAsync(
+            player.getUniqueId(), family, level, promotion, getGameDayStart(LocalDateTime.now()))
+            .thenCompose(reservation -> {
+                if (reservation.status == ShopClaimLedger.Status.ALREADY_CLAIMED)
+                    return CompletableFuture.completedFuture(new ClaimResult(false, "already_claimed", "\u4eca\u5929\u5df2\u7ecf\u9886\u53d6\u8fc7\u4e86"));
+                if (reservation.status != ShopClaimLedger.Status.RESERVED)
+                    return CompletableFuture.completedFuture(new ClaimResult(false, "database_error", "\u9886\u53d6\u8bb0\u5f55\u672a\u80fd\u4fdd\u5b58"));
+                return onServerThread(() -> {
+                    if (activity && (deadline <= System.currentTimeMillis()
+                            || (isNationalDay ? !configManager.isNationalDayActive()
+                                    : !configManager.isAllKitsFreeLevel(family, level))))
+                        throw new IllegalStateException("Activity has ended");
+                    provider.deliver(player, rewards);
+                    playerKitCache.remove(player.getUniqueId().toString());
+                    return new ClaimResult(true, "success", "\u9886\u53d6\u6210\u529f");
+                }).handle((result, failure) -> {
+                    if (failure == null) return CompletableFuture.completedFuture(result);
+                    Throwable cause = unwrap(failure);
+                    if (cause.getClass().getSimpleName().equals("DeliveryException")) {
+                        try {
+                            if (!Boolean.TRUE.equals(cause.getClass().getMethod("isRestored").invoke(cause)))
+                                return CompletableFuture.completedFuture(new ClaimResult(false, "delivery_failed", "\u53d1\u653e\u72b6\u6001\u5f02\u5e38\uff0c\u8bf7\u8054\u7cfb\u7ba1\u7406\u5458\u6838\u5bf9"));
+                        } catch (ReflectiveOperationException uncertain) {
+                            return CompletableFuture.completedFuture(new ClaimResult(false, "delivery_failed", "\u8bf7\u8054\u7cfb\u7ba1\u7406\u5458\u6838\u5bf9\u53d1\u653e\u72b6\u6001"));
+                        }
+                    }
+                    return plugin.getDatabaseManager().restoreShopRewardAsync(reservation).thenApply(restored -> {
+                        playerKitCache.remove(player.getUniqueId().toString());
+                        return new ClaimResult(false, "delivery_failed", restored
+                            ? "\u672a\u53d1\u653e\u7269\u54c1\uff0c\u672c\u6b21\u9886\u53d6\u6b21\u6570\u5df2\u6062\u590d"
+                            : "\u9886\u53d6\u72b6\u6001\u6062\u590d\u5931\u8d25\uff0c\u8bf7\u8054\u7cfb\u7ba1\u7406\u5458\u6838\u5bf9");
+                    });
+                }).thenCompose(result -> result);
+            })).exceptionally(failure -> {
+                Throwable cause = unwrap(failure);
+                boolean full = cause.getClass().getSimpleName().equals("NoSpaceException");
+                if (!full) plugin.getLogger().warning("AngelItem reward preparation failed for " + family + ":" + level + " (KIT-BUILD-01).");
+                return new ClaimResult(false, full ? "no_space" : "delivery_failed", full
+                    ? "\u80cc\u5305\u7a7a\u95f4\u4e0d\u8db3\uff0c\u672a\u6d88\u8017\u9886\u53d6\u6b21\u6570"
+                    : "\u793c\u5305\u6682\u65f6\u65e0\u6cd5\u751f\u6210\uff0c\u672a\u53d1\u653e\u65e7\u7248\u7269\u54c1");
+            });
+    }
+
+    private <T> CompletableFuture<T> onServerThread(Callable<T> action) {
+        CompletableFuture<T> result = new CompletableFuture<>();
+        Runnable task = () -> { try { result.complete(action.call()); } catch (Exception failure) { result.completeExceptionally(failure); } };
+        try {
+            if (Bukkit.isPrimaryThread()) task.run(); else plugin.getServer().getScheduler().runTask(plugin, task);
+        } catch (RuntimeException failure) { result.completeExceptionally(failure); }
+        return result;
+    }
+
+    private Throwable unwrap(Throwable failure) {
+        while ((failure instanceof CompletionException || failure instanceof ExecutionException) && failure.getCause() != null)
+            failure = failure.getCause();
+        return failure;
+    }
+
+    private LocalDateTime getGameDayStart(LocalDateTime time) {
+        int resetHour = configManager.getDailyResetHour();
+        LocalDateTime todayReset = time.toLocalDate().atTime(resetHour, 0);
+        return time.isBefore(todayReset) ? todayReset.minusDays(1) : todayReset;
     }
     
     /**
@@ -496,6 +752,156 @@ public class KitManager {
         
         // 特殊金苹果奖励
         giveSpecialApples(player, kitType, level);
+    }
+
+    /**
+     * 活动领取专用发放路径。普通物品只写轻量 lore 标签，不给每件物品创建数据库行；
+     * 沾星顾月/仰望星辰仍通过 SkyPVPItem 的索引仓储保存技能所需 grant。
+     */
+    private void executePromotionKitRewards(
+            Player player,
+            String kitType,
+            int level,
+            String promotionId,
+            long promotionEndsAtMillis,
+            String promotionZoneId) {
+        if (!configManager.isAllKitsFreeLevel(kitType, level)
+                || promotionEndsAtMillis <= System.currentTimeMillis()) {
+            plugin.getLogger().info("跳过已结束活动的礼包发放: " + player.getName()
+                    + " " + kitType + " Lv." + level);
+            return;
+        }
+
+        if (requiresSkyPVPItem(kitType)) {
+            if (!SkyPVPItemBridge.giveSetUntil(
+                    player,
+                    kitType,
+                    promotionEndsAtMillis,
+                    promotionZoneId)) {
+                plugin.getLogger().warning("无法按活动截止时间发放 " + kitType
+                        + " 套装给玩家 " + player.getName());
+                player.sendMessage("§c活动礼包发放失败，请联系管理员检查 SkyPVPItem");
+            }
+            return;
+        }
+
+        List<ItemStack> activityItems = new ArrayList<>();
+        if (!collectPromotionEquipment(activityItems, player, kitType, level)) {
+            return;
+        }
+        collectPromotionSpecialItems(activityItems, kitType, level);
+
+        if (activityItems.isEmpty()) {
+            return;
+        }
+        int givenStacks = SkyPVPItemBridge.giveActivityItems(
+                player,
+                activityItems,
+                promotionId,
+                promotionEndsAtMillis,
+                promotionZoneId);
+        if (givenStacks != activityItems.size()) {
+            plugin.getLogger().warning("活动礼包物品发放不完整: " + player.getName()
+                    + " " + kitType + " Lv." + level + "，计划 " + activityItems.size()
+                    + " 组，实际 " + givenStacks + " 组");
+            player.sendMessage("§c活动礼包部分物品发放失败，请联系管理员");
+        }
+    }
+
+    private boolean collectPromotionEquipment(
+            List<ItemStack> destination,
+            Player player,
+            String kitType,
+            int level) {
+        List<String> configuredRewardKeys = configManager.getKitRewardItems(kitType, level);
+        if (configuredRewardKeys.isEmpty()) {
+            plugin.getLogger().warning("礼包 " + kitType + " 等级 " + level + " 没有配置EZItem模板");
+            player.sendMessage("§c该礼包未配置 EZItem 模板，无法发放");
+            return false;
+        }
+        if (plugin.getEZItemIntegration() == null || !plugin.getEZItemIntegration().isEZItemEnabled()) {
+            plugin.getLogger().warning("EZItem 未启用，无法准备活动礼包 " + kitType + " 等级 " + level);
+            player.sendMessage("§cEZItem 未启用，无法发放该礼包");
+            return false;
+        }
+
+        int cleanedLegacyItems = cleanupLegacyIssuedItems(player, kitType, level);
+        if (cleanedLegacyItems > 0) {
+            player.sendMessage("§e已自动清理旧版手动发放装备 " + cleanedLegacyItems + " 件");
+        }
+
+        List<ItemStack> prepared = new ArrayList<>(configuredRewardKeys.size());
+        for (String itemKey : configuredRewardKeys) {
+            if (itemKey == null || itemKey.trim().isEmpty()) {
+                continue;
+            }
+            ItemStack template = plugin.getEZItemIntegration().getItemByTemplate(itemKey);
+            if (template == null) {
+                plugin.getLogger().warning("活动礼包 EZItem 模板不存在，停止发放: " + itemKey);
+                player.sendMessage("§c礼包模板缺失: " + itemKey);
+                return false;
+            }
+            prepared.add(template);
+        }
+        destination.addAll(prepared);
+        return true;
+    }
+
+    private void collectPromotionSpecialItems(List<ItemStack> destination, String kitType, int level) {
+        switch (kitType) {
+            case "moon":
+                destination.add(createGoldenAppleStack(2 + (2 * level), true));
+                destination.add(createStrengthPotionStack(2, 2, 90));
+                break;
+            case "earth":
+                destination.add(createGoldenAppleStack(1, false));
+                break;
+            case "mars":
+                destination.add(createGoldenAppleStack(1, true));
+                break;
+            case "mining":
+                if (level >= 3) {
+                    destination.add(createStrengthPotionStack(3, 5, 90));
+                }
+                break;
+            default:
+                break;
+        }
+        destination.removeIf(java.util.Objects::isNull);
+    }
+
+    private ItemStack createGoldenAppleStack(int amount, boolean enchanted) {
+        ItemStack apple = new ItemStack(Material.GOLDEN_APPLE, amount);
+        if (enchanted) {
+            apple.setDurability((short) 1);
+        }
+        return apple;
+    }
+
+    private ItemStack createStrengthPotionStack(
+            int amplifier,
+            int amount,
+            int durationSeconds) {
+        try {
+            ItemStack potion = new ItemStack(Material.POTION, amount);
+            PotionMeta meta = (PotionMeta) potion.getItemMeta();
+            PotionEffect strengthEffect = new PotionEffect(
+                    PotionEffectType.INCREASE_DAMAGE,
+                    durationSeconds * 20,
+                    amplifier - 1);
+            meta.addCustomEffect(strengthEffect, true);
+            meta.setDisplayName("§b力量" + amplifier + "药水");
+            List<String> lore = new ArrayList<>();
+            lore.add("§7效果: 力量 " + amplifier);
+            lore.add("§7持续时间: " + (durationSeconds / 60) + "分"
+                    + (durationSeconds % 60) + "秒");
+            meta.setLore(lore);
+            potion.setItemMeta(meta);
+            return potion;
+        } catch (RuntimeException exception) {
+            plugin.getLogger().warning("创建活动力量药水失败: " + exception.getMessage());
+            return null;
+        }
     }
     
     /**
